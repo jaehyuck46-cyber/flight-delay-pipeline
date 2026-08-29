@@ -1,0 +1,34 @@
+﻿name: 김포공항 항공편 수집
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 코드 내려받기
+        uses: actions/checkout@v4
+
+      - name: 파이썬 설치
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 라이브러리 설치
+        run: pip install requests python-dotenv
+
+      - name: 데이터 수집 실행
+        env:
+          KAC_SERVICE_KEY: ${{ secrets.KAC_SERVICE_KEY }}
+        run: python collect.py
+
+      - name: 수집한 DB를 저장소에 커밋
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add -f data/flights.db
+          git commit -m "자동 수집" || echo "변경사항 없음"
+          git push
