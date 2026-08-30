@@ -1,4 +1,4 @@
-﻿"""
+"""
 collect.py - Gimpo airport flight collector
 Fetches Korea Airports Corp real-time arrivals API, keeps Gimpo(GMP) only, saves to DB.
 Usage:
@@ -8,8 +8,9 @@ Usage:
 
 import os
 import sys
-import urllib.request
 import time
+import urllib.request
+import urllib.error
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 
@@ -44,9 +45,9 @@ def fetch_all_arrivals(max_pages=25):
             f"{BASE_URL}?serviceKey={SERVICE_KEY}"
             f"&numOfRows=100&pageNo={page}&airport={GIMPO_ENCODED}"
         )
-          req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
 
-        # ── 재시도: 타임아웃 나면 쉬었다가 다시 (최대 3번) ──
+        # 재시도: 타임아웃 등 통신 에러가 나면 쉬었다가 다시 (최대 3번)
         text = None
         for attempt in range(1, 4):                     # 1, 2, 3번째 시도
             try:
@@ -54,7 +55,7 @@ def fetch_all_arrivals(max_pages=25):
                     text = r.read().decode("utf-8")
                 break                                    # 성공하면 반복 탈출
             except urllib.error.URLError as e:
-                print(f"[retry] {page}페이지 {attempt}번째 실패: {e}")
+                print("[retry] page " + str(page) + " attempt " + str(attempt) + " failed: " + str(e))
                 if attempt == 3:                         # 3번째도 실패하면
                     raise                                # 그때는 진짜 포기(에러 던짐)
                 time.sleep(attempt * 3)                  # 3초, 6초 쉬고 재시도
