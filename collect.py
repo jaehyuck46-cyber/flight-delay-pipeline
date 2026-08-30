@@ -9,6 +9,7 @@ Usage:
 import os
 import sys
 import urllib.request
+import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 
