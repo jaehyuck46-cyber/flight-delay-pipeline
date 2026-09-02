@@ -66,6 +66,27 @@ def init_db():
         )
     """)
 
+    # ── 4. weather: 김포공항 날씨 스냅샷 (수집 시각당 1행) ──
+    #     항공편을 수집하는 그 시각의 김포 날씨를 함께 저장한다.
+    #     나중에 flights와 시각 기준으로 엮어서 "날씨별 지연" 분석에 쓴다.
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS weather (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            airport       TEXT,               -- 어느 공항 (GMP)
+            base_date     TEXT,               -- 기상청 발표 날짜 (YYYYMMDD)
+            base_time     TEXT,               -- 기상청 발표 시각 (HHMM)
+            fcst_date     TEXT,               -- 예보 대상 날짜
+            fcst_time     TEXT,               -- 예보 대상 시각
+            temp          REAL,               -- TMP: 기온(℃)
+            rain_type     INTEGER,            -- PTY: 강수형태 (0없음/1비/2비눈/3눈/4소나기)
+            sky           INTEGER,            -- SKY: 하늘상태 (1맑음/3구름많음/4흐림)
+            wind_speed    REAL,               -- WSD: 풍속(m/s)
+            humidity      INTEGER,            -- REH: 습도(%)
+            rain_prob     INTEGER,            -- POP: 강수확률(%)
+            collected_at  TEXT                -- 이 날씨를 수집한 시각
+        )
+    """)
+
     conn.commit()
     conn.close()
     print(f"✅ DB 준비 완료 → {DB_PATH}")

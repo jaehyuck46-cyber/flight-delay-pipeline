@@ -8,6 +8,8 @@ on:
 jobs:
   collect:
     runs-on: ubuntu-latest
+    env:
+      PYTHONUTF8: "1"
     steps:
       - name: 코드 내려받기
         uses: actions/checkout@v4
@@ -25,10 +27,15 @@ jobs:
           KAC_SERVICE_KEY: ${{ secrets.KAC_SERVICE_KEY }}
         run: python collect.py
 
+      - name: 날씨 수집 실행
+        env:
+          KMA_SERVICE_KEY: ${{ secrets.KMA_SERVICE_KEY }}
+        run: python weather.py
+
       - name: 수집한 DB를 저장소에 커밋
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add -f data/flights.db
-          git commit -m "자동 수집" || echo "변경사항 없음"
+          git commit -m "자동 수집 (항공편+날씨)" || echo "변경사항 없음"
           git push
