@@ -1,76 +1,123 @@
 # ✈️ flight-delay-pipeline
 
-> 김포공항(GMP) 실시간 도착편 데이터를 **30분마다 자동 수집**하고, 편별 상태 변화를 시계열로 축적하는 서버리스 데이터 파이프라인
-
-![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
-![SQLite](https://img.shields.io/badge/SQLite-003B57?logo=sqlite&logoColor=white)
-![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-cron-2088FF?logo=githubactions&logoColor=white)
+> 김포공항(GMP) 실시간 도착편과 날씨를 **30분마다 자동 수집**하고,
+> 편별 상태 변화를 시계열로 축적해 **지연 패턴을 분석**하는 서버리스 데이터 파이프라인
 
 ---
 
-## 📌 프로젝트 개요
+## 📌 이 프로젝트를 만든 이유
 
-항공편 지연·결항은 "지금 몇 편이 지연됐나"보다 **"어떤 편이, 언제, 어떻게 지연으로 바뀌었나"** 가 훨씬 가치 있는 정보다.
-공공데이터포털은 *현재 시점*의 스냅샷만 주기 때문에, 이 프로젝트는 그 스냅샷을 주기적으로 떠서 **변화 이력을 직접 만들어 축적**한다.
+데이터 엔지니어가 되고 싶어서, 항공 도메인으로 **직접 굴러가는 파이프라인**을 하나 만들어보고 싶었다.
 
-- **데이터 소스** — 한국공항공사 실시간 항공기 운항정보 조회 GW API (`data.go.kr` / `B551178/flight-status/arrival`)
-- **수집 대상** — 김포공항(GMP) 도착편
+항공편 지연·결항은 "지금 몇 편이 지연됐나"보다 **"어떤 편이, 언제, 어떻게 지연으로 바뀌었나"** 가 훨씬 가치 있는 정보라고 생각했다. 그런데 공공데이터포털은 *현재 시점*의 스냅샷만 준다. 그래서 이 프로젝트는 그 스냅샷을 주기적으로 떠서 **변화 이력을 직접 만들어 축적**한다.
+
+여기에 더해, 항공 지연의 큰 원인 중 하나가 날씨라고 생각해서 **기상청 날씨 데이터도 같이 수집**하도록 확장했다. 나중에 "날씨가 나쁠 때 정말 지연이 늘어나는가"를 데이터로 확인해보는 게 목표다.
+
+- **데이터 소스 1** — 한국공항공사 실시간 항공기 운항정보 조회 API (`data.go.kr` / `B551178/flight-status/arrival`)
+- **데이터 소스 2** — 기상청 단기예보 조회서비스 (`data.go.kr` / `VilageFcstInfoService_2.0/getVilageFcst`)
+- **수집 대상** — 김포공항(GMP) 도착편 + 김포공항 날씨
 - **운영 방식** — GitHub Actions 크론으로 30분마다 무인 실행 → DB를 저장소에 자동 커밋 (**별도 서버 0원**)
 
 ---
 
 ## 🏗️ 아키텍처
 
-```mermaid
-flowchart LR
-    A["data.go.kr API<br/>(실시간 도착편)"] -->|30분마다| B["collect.py<br/>수집 · 필터 · 적재"]
-    B --> C[("SQLite<br/>flights.db")]
-    C --> D["analyze.py<br/>요약 · 검증"]
-    E["GitHub Actions<br/>cron */30"] -.실행.-> B
-    E -.DB 커밋/푸시.-> F[("Git 저장소")]
-    C --> F
+```
+       [공공데이터포털]                    [기상청 API]
+    실시간 도착편 스냅샷                  김포 단기예보
+            │                                 │
+            ▼                                 ▼
+       collect.py                        weather.py
+     (수집·필터·UPSERT)                 (발표시각 계산·파싱)
+            │                                 │
+            └──────────────┬──────────────────┘
+                           ▼
+                  SQLite (flights.db)
+              flights / flight_events /
+              collection_log / weather
+                           │
+                           ▼
+                      analyze.py
+              (지연율·항공사별·시간대별 분석)
+
+   ⏰ GitHub Actions cron(*/30) 이 위 흐름 전체를
+      30분마다 자동 실행하고, 갱신된 DB를 저장소에 커밋한다.
 ```
 
-수집 → 적재 → 커밋까지 사람 손이 전혀 닿지 않는다. 저장소에 쌓인 `flights.db` 자체가 곧 데이터 자산.
+수집 → 적재 → 커밋까지 사람 손이 전혀 닿지 않는다. 저장소에 쌓인 `flights.db` 자체가 곧 데이터 자산이다.
 
 ---
 
-## 💡 핵심 설계 포인트
+## 💡 만들면서 신경 쓴 점
 
-| 설계 | 무엇을 | 왜 |
-|------|--------|-----|
-| **멱등성(idempotent) UPSERT** | `ON CONFLICT(flight_key) DO UPDATE` 로 편별 1행 유지 | 같은 편을 몇 번 수집해도 중복이 쌓이지 않고 항상 최신 상태만 남김 |
-| **변경 이력 추적 (CDC 개념)** | 상태·예상시각이 바뀔 때만 `flight_events` 에 1행 기록 | 스냅샷 API로는 알 수 없는 *"정상→지연→도착"* 전이 과정을 시계열로 복원 |
-| **서버리스 자동화 ETL** | GitHub Actions cron + `secrets` 로 키 관리 | 무료·무중단으로 24/7 수집. 인프라 유지비 없음 |
-| **수집 로그 (관측성)** | 실행마다 `collection_log` 에 건수·성공여부 기록 | 파이프라인이 언제 얼마나 돌았는지 사후 검증 가능 |
+처음엔 그냥 "데이터 긁어서 저장"만 생각했는데, 막상 해보니 고민할 게 많았다. 그중 배운 것들:
+
+| 설계 | 무엇을 | 왜 이렇게 했나 |
+| --- | --- | --- |
+| **멱등성(idempotent) UPSERT** | `ON CONFLICT(flight_key) DO UPDATE` 로 편별 1행 유지 | 같은 편을 몇 번 수집해도 중복이 쌓이지 않고 항상 최신 상태만 남기려고 |
+| **변경 이력 추적 (CDC 개념)** | 상태·예상시각이 바뀔 때만 `flight_events` 에 1행 기록 | 스냅샷 API로는 알 수 없는 *"정상→지연→도착"* 전이 과정을 시계열로 복원하려고 |
+| **서버리스 자동화 ETL** | GitHub Actions cron + `secrets` 로 키 관리 | 내 PC를 안 켜도 24/7 수집되게. 인프라 유지비 0원 |
+| **수집 로그 (관측성)** | 실행마다 `collection_log` 에 건수·성공여부 기록 | 파이프라인이 언제 얼마나 돌았는지 나중에 검증할 수 있게 |
+| **API 키 분리 관리** | `.env` + `.gitignore` + GitHub Secrets | 키가 실수로 공개 저장소에 올라가지 않게 (직접 겪고 배운 부분) |
 
 ---
 
 ## 🗃️ 데이터 모델
 
-3개 테이블로 **현재 상태 / 변경 이력 / 실행 로그**를 분리했다.
+4개 테이블로 **현재 상태 / 변경 이력 / 실행 로그 / 날씨**를 분리했다.
 
 **`flights`** — 편별 현재 상태 (편당 1행)
 
 | 컬럼 | 설명 |
-|------|------|
+| --- | --- |
 | `flight_key` (PK) | 편명+날짜+출도착 조합 고유키 |
 | `flight_id` / `airline` | 편명 · 항공사 |
 | `scheduled_dt` / `estimated_dt` | 계획 시각 · 예상 시각 |
-| `status` | 상태(도착/지연/결항 등) |
+| `status` | 상태(도착/결항/회항 등) |
 | `collected_at` / `updated_at` | 최초 수집 · 최종 갱신 시각 |
 
-**`flight_events`** — 상태 변경 이력 (편당 N행) — *`status` 또는 `estimated_dt` 가 바뀔 때만 append*
+**`flight_events`** — 상태 변경 이력 (편당 N행) — *`status` 또는 `estimated_dt` 가 바뀔 때만 기록*
 
 **`collection_log`** — 수집 실행 기록 (실행당 1행) — 받아온 편 수 · 변경 편 수 · 성공 여부
+
+**`weather`** — 김포공항 날씨 스냅샷 (수집 시각당 1행)
+
+| 컬럼 | 설명 |
+| --- | --- |
+| `fcst_date` / `fcst_time` | 예보 대상 날짜 · 시각 |
+| `temp` / `humidity` | 기온(℃) · 습도(%) |
+| `rain_type` / `rain_prob` | 강수형태 · 강수확률(%) |
+| `sky` / `wind_speed` | 하늘상태 · 풍속(m/s) |
+| `collected_at` | 이 날씨를 수집한 시각 |
+
+---
+
+## 📊 분석 결과 (지금까지 쌓인 데이터 기준)
+
+도착 완료편 1,246건을 대상으로 지연율을 계산해봤다. 지연 기준은 항공업계 표준인 **15분**을 썼다.
+(지연 = 예상 도착시각 − 계획 도착시각)
+
+**항공사별 15분 지연율** — 대형 항공사가 저비용항공사(LCC)보다 정시성이 확실히 좋았다.
+
+| 항공사 | 편수 | 15분 지연율 |
+| --- | --- | --- |
+| 이스타항공 | 147 | 34.7% |
+| 진에어 | 86 | 24.4% |
+| 제주항공 | 192 | 23.4% |
+| **대한항공** | 227 | **12.8%** |
+| 아시아나항공 | 198 | 12.1% |
+
+**시간대별 지연율** — 아침(7~8시)은 지연이 거의 없다가, 오후 2시(31%)와 저녁 6시(28%)에 정점을 찍었다. 앞 비행기의 지연이 뒤로 누적되는 패턴으로 보인다.
+
+> 이 숫자들은 데이터가 더 쌓이면 달라질 수 있다. 지금은 며칠 치라 표본이 작다.
 
 ---
 
 ## 🛠️ 기술 스택
 
-`Python 3.12` · `SQLite` · `urllib` · `xml.etree` (표준 라이브러리 위주) · `GitHub Actions`
+`Python 3.12` · `SQLite` · `urllib` · `xml.etree` · `json` · `GitHub Actions`
 
-> 외부 의존성을 최소화해서 GitHub Actions 러너에서 가볍게 돌아가도록 구성.
+> 표준 라이브러리 위주로 짜서 외부 의존성을 최소화했다. GitHub Actions 러너에서 가볍게 돌아가게 하려고.
 
 ---
 
@@ -81,16 +128,20 @@ flowchart LR
 git clone https://github.com/jaehyuck46-cyber/flight-delay-pipeline.git
 cd flight-delay-pipeline
 
-# 2. API 키 설정 (data.go.kr에서 발급)
-echo "KAC_SERVICE_KEY=발급받은_키" > .env
+# 2. API 키 설정 (data.go.kr에서 발급, 계정당 인증키 하나로 두 API 공용)
+#    .env 파일에 아래 두 줄을 넣는다
+#    KAC_SERVICE_KEY=발급받은_키   ← 항공편용
+#    KMA_SERVICE_KEY=발급받은_키   ← 날씨용 (같은 키)
 
 # 3. API 응답 미리보기 (저장 안 함)
-python collect.py --inspect
+python collect.py --inspect     # 항공편
+python weather.py --inspect     # 날씨
 
 # 4. 수집 + DB 저장
 python collect.py
+python weather.py
 
-# 5. 쌓인 데이터 요약 확인
+# 5. 쌓인 데이터 요약·지연율 분석 확인
 python analyze.py
 ```
 
@@ -100,17 +151,37 @@ python analyze.py
 
 ```
 flight-delay-pipeline/
-├── db.py                        # DB 연결 · 테이블 3개 스키마 정의
-├── collect.py                   # API 호출 → GMP 필터 → UPSERT 적재
-├── analyze.py                   # 저장된 데이터 요약/검증
-├── data/flights.db              # 자동 커밋되는 SQLite (데이터 자산)
-└── .github/workflows/collect.yml# 30분 주기 cron 자동화
+├── db.py                         # DB 연결 · 테이블 4개 스키마 정의
+├── collect.py                    # 항공편 API → GMP 필터 → UPSERT 적재
+├── weather.py                    # 기상청 API → 발표시각 계산 → 날씨 적재
+├── analyze.py                    # 요약 + 지연율(전체·항공사별·시간대별) 분석
+├── data/flights.db               # 자동 커밋되는 SQLite (데이터 자산)
+└── .github/workflows/collect.yml # 30분 주기 cron 자동화
 ```
 
 ---
 
-## 🔭 향후 계획
+## 🔭 앞으로 할 것
 
-- [ ] 축적된 이력으로 **지연 확정 시점 분석** (예상시각이 몇 번, 얼마나 밀리다 결항으로 가는지)
-- [ ] 항공사·시간대별 지연 패턴 시각화
+- [x] 항공사·시간대별 지연 패턴 분석 (`analyze.py` 에 구현)
+- [ ] **날씨 × 지연 결합 분석** — "비/강풍일 때 지연·결항이 실제로 늘어나는가" (이 프로젝트의 최종 목표)
+- [ ] 지연율 분석 결과를 매일 자동 리포트로 저장 (분석까지 자동화)
 - [ ] 파일 기반 SQLite → 컬럼 지향 포맷(Parquet) 이관 및 조회 성능 비교
+
+---
+
+## 💭 떠오른 아이디어 (언제든 추가)
+
+계획한 것 말고, 하다가 문득 떠오른 것들을 여기에 그냥 적어둔다.
+지금 할 건 아니어도, 나중에 이 중 하나가 프로젝트를 더 재밌게 만들 수도 있으니까.
+
+- (예시) 회항·결항이 발생한 시각의 날씨를 따로 모아보기 — 악천후랑 정말 관련 있을까?
+- (예시) 특정 항공사가 유독 잘 지연되는 노선이 있는지 (출발 공항별로 쪼개보기)
+- (예시) 지연이 "정상 → 지연 → 결항"으로 번지는 데 보통 몇 분 걸리는지 (flight_events 활용)
+
+> 여기에 계속 덧붙여 나갈 예정. 아이디어는 원래 갑자기 나는 거니까.
+
+---
+
+> 데이터 엔지니어를 목표로 공부하면서 만든 프로젝트입니다.
+> 수집부터 자동화·분석까지 직접 굴려보며 배우고 있습니다.
