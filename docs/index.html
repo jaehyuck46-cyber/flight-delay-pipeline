@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>김포공항 도착편 지연 분석</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 900px; margin: 40px auto; padding: 0 16px; color:#222; }
+  h1 { font-size: 1.5rem; }
+  h2 { font-size: 1.1rem; margin-top: 0; }
+  .meta { color: #666; font-size: 0.9rem; margin-bottom: 32px; }
+  .card { margin-bottom: 48px; }
+</style>
+</head>
+<body>
+  <h1>김포공항(GMP) 도착편 지연 분석</h1>
+  <p class="meta">대상: 도착 완료편 1348건 · 생성 2026-09-05 17:40</p>
+
+  <div class="card">
+    <h2>항공사별 15분 지연율 (20편 이상)</h2>
+    <canvas id="airlineChart"></canvas>
+  </div>
+
+  <div class="card">
+    <h2>시간대별 15분 지연율</h2>
+    <canvas id="hourChart"></canvas>
+  </div>
+
+<script>
+  const airlineLabels = ["이스타항공", "진에어", "제주항공", "에어서울", "아시아나항공", "대한항공", "티웨이항공", "피치항공", "전일본공수", "에어부산", "일본항공", "섬에어"];
+  const airlineValues = [32.5, 22.8, 22.0, 16.1, 12.0, 11.8, 10.0, 8.3, 8.3, 8.1, 7.4, 3.3];
+  const hourLabels = ["07시", "08시", "09시", "10시", "11시", "12시", "13시", "14시", "15시", "16시", "17시", "18시", "19시", "20시", "21시", "22시"];
+  const hourValues = [0.0, 0.0, 10.0, 14.7, 12.0, 3.4, 8.8, 30.1, 18.4, 16.5, 21.5, 27.7, 16.9, 9.3, 12.4, 18.6];
+
+  new Chart(document.getElementById('airlineChart'), {
+    type: 'bar',
+    data: { labels: airlineLabels,
+            datasets: [{ label: '15분 지연율(%)', data: airlineValues }] },
+    options: { scales: { y: { beginAtZero: true } } }
+  });
+
+  new Chart(document.getElementById('hourChart'), {
+    type: 'bar',
+    data: { labels: hourLabels,
+            datasets: [{ label: '15분 지연율(%)', data: hourValues }] },
+    options: { scales: { y: { beginAtZero: true } } }
+  });
+</script>
+</body>
+</html>
