@@ -18,6 +18,97 @@ def _parse_dt(text):
     except (ValueError, TypeError):
         return None
 
+# ── 날씨 매칭용 설정 ─────────────────────────────────────────
+
+# 편 시각과 예보 시각의 차이가 이 값(분)보다 크면 "짝이 없다"고 본다.
+# 이건 손잡이(tunable)다: 늘리면 매칭은 늘지만 엉뚱한 시각 날씨와 붙을 위험↑
+MAX_GAP_MIN = 90
+
+# 강수형태(PTY) 코드 → 사람 말 (weather.py의 PTY_KOR와 동일)
+RAIN_TYPE_LABEL = {0: "없음", 1: "비", 2: "비/눈", 3: "눈", 4: "소나기"}
+
+
+def load_weather_index():
+    """weather 테이블을 통째로 읽어 공항별로 정리한다.
+    반환 형태: { "GMP": [(예보시각_datetime, weather행), ...], ... }
+    편마다 매번 DB를 뒤지지 않으려고 미리 한 번만 정리해 두는 것.
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    rows = cur.execute("SELECT * FROM weather").fetchall()
+    conn.close()
+
+    index = defaultdict(list)          # 없는 키를 꺼내도 빈 리스트가 나오는 딕셔너리
+    for w in rows:
+        # fcst_date(YYYYMMDD) + fcst_time(HHMM) = 편 시각과 같은 12자리 형식
+        fcst_dt = _parse_dt((w["fcst_date"] or "") + (w["fcst_time"] or ""))
+        if fcst_dt is None:            # 형식이 깨진 행은 건너뜀
+            continue
+        index[w["airport"]].append((fcst_dt, w))
+    return index
+
+
+def find_nearest_weather(airport, target_dt, weather_index):
+    """특정 공항에서 target_dt(편 계획시각)에 시각이 가장 가까운 예보 1건을 찾는다.
+    차이가 MAX_GAP_MIN분을 넘으면 '짝 없음'으로 보고 None을 돌려준다.
+    """
+    candidates = weather_index.get(airport)
+    if not candidates:                 # 그 공항 날씨가 아예 없음
+        return None
+    # 시간차(초)가 가장 작은 (예보시각, 행) 쌍을 고른다
+    best = min(candidates, key=lambda pair: abs((pair[0] - target_dt).total_seconds()))
+    gap_min = abs((best[0] - target_dt).total_seconds()) / 60
+    if gap_min > MAX_GAP_MIN:          # 너무 멀면 짝으로 안 침
+        return None
+    return best[1]                     # weather 행을 돌려줌
+
+
+def analyze_delay_by_weather():
+    """날씨(강수형태)별 15분 지연율을 계산한다."""
+    weather_index = load_weather_index()
+
+    conn = get_connection()
+    cur = conn.cursor()
+    rows = cur.execute("""
+        SELECT airport, scheduled_dt, estimated_dt
+        FROM flights
+        WHERE status = '도착'
+          AND scheduled_dt IS NOT NULL AND scheduled_dt != ''
+          AND estimated_dt IS NOT NULL AND estimated_dt != ''
+    """).fetchall()
+    conn.close()
+
+    stats = defaultdict(lambda: [0, 0])   # 날씨라벨 -> [총편수, 15분지연 건수]
+    matched = 0       # 날씨를 찾은 편 수
+    unmatched = 0     # 가까운 날씨가 없던 편 수
+
+    for r in rows:
+        sched = _parse_dt(r["scheduled_dt"])
+        est = _parse_dt(r["estimated_dt"])
+        if sched is None or est is None:
+            continue
+
+        w = find_nearest_weather(r["airport"], sched, weather_index)
+        if w is None:
+            unmatched += 1
+            continue
+        matched += 1
+
+        delay_min = (est - sched).total_seconds() / 60
+        label = RAIN_TYPE_LABEL.get(w["rain_type"], f"코드{w['rain_type']}")
+        s = stats[label]
+        s[0] += 1
+        if delay_min >= 15:
+            s[1] += 1
+
+    print("\n── 날씨(강수형태)별 15분 지연율 ──")
+    print(f"  (날씨 매칭 성공 {matched}건 / 실패 {unmatched}건)")
+    if not stats:
+        print("  분석 대상 없음 (아직 편·날씨가 겹치는 데이터가 없음)")
+        return
+    for label in sorted(stats):
+        cnt, d15 = stats[label]
+        print(f"  {label:<6} : {cnt:>4}건 중 {d15:>4}건 지연 ({d15 / cnt * 100:.1f}%)")
 
 def analyze_overall_delay():
     """도착편 전체의 지연율을 계산한다 (15분 기준 / 0분 기준)."""
@@ -188,7 +279,20 @@ def main():
     analyze_overall_delay()
     analyze_delay_by_airline()
     analyze_delay_by_hour()
+    analyze_delay_by_weather()
 
 
 if __name__ == "__main__":
     main()
+
+conn = get_connection()
+cur = conn.cursor()
+rows = cur.execute("""
+    SELECT flight_id, airport, scheduled_dt, status, collected_at
+    FROM flights
+    WHERE status IS NULL OR status = ''
+    LIMIT 15
+""").fetchall()
+for r in rows:
+    print(dict(r))
+conn.close()
