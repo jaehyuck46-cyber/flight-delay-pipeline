@@ -1,7 +1,8 @@
 """
 db.py — 데이터베이스 담당 파일
 
-역할: SQLite에 연결하고, 테이블 3개를 만든다.
+역할: SQLite에 연결하고, 테이블 4개를 만든다.
+      (flights · flight_events · collection_log · weather)
       (데이터를 '담을 그릇'을 만드는 파일)
 """
 
@@ -22,7 +23,7 @@ def get_connection():
 
 
 def init_db():
-    """테이블 3개를 만든다. 이미 있으면 그냥 넘어감."""
+    """테이블 4개를 만든다. 이미 있으면 그냥 넘어감."""
     conn = get_connection()
     cur = conn.cursor()
 
@@ -66,24 +67,24 @@ def init_db():
         )
     """)
 
-    # ── 4. weather: 김포공항 날씨 스냅샷 (수집 시각당 1행) ──
-    #     항공편을 수집하는 그 시각의 김포 날씨를 함께 저장한다.
-    #     나중에 flights와 시각 기준으로 엮어서 "날씨별 지연" 분석에 쓴다.
+    # ── 4. weather: 서울(108) ASOS 시간관측 (관측시각당 1행) ──
+    #     기상청 ASOS 시간자료 API로 '실제 관측된' 과거 날씨를 저장한다.
+    #     (예보 아님 — 지난 시각의 검증된 관측값. 백필로 8/26부터 채운다)
+    #     김포엔 ASOS 지점이 없어 가장 가까운 서울(108)을 대체 지점으로 쓴다.
+    #     나중에 flights와 시각(obs_time) 기준으로 엮어 "날씨별 지연"을 분석한다.
     cur.execute("""
         CREATE TABLE IF NOT EXISTS weather (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
-            airport       TEXT,               -- 어느 공항 (GMP)
-            base_date     TEXT,               -- 기상청 발표 날짜 (YYYYMMDD)
-            base_time     TEXT,               -- 기상청 발표 시각 (HHMM)
-            fcst_date     TEXT,               -- 예보 대상 날짜
-            fcst_time     TEXT,               -- 예보 대상 시각
-            temp          REAL,               -- TMP: 기온(℃)
-            rain_type     INTEGER,            -- PTY: 강수형태 (0없음/1비/2비눈/3눈/4소나기)
-            sky           INTEGER,            -- SKY: 하늘상태 (1맑음/3구름많음/4흐림)
-            wind_speed    REAL,               -- WSD: 풍속(m/s)
-            humidity      INTEGER,            -- REH: 습도(%)
-            rain_prob     INTEGER,            -- POP: 강수확률(%)
-            collected_at  TEXT                -- 이 날씨를 수집한 시각
+            stn_id        TEXT,               -- 관측 지점번호 (108=서울)
+            obs_time      TEXT,               -- 관측 시각 (tm, YYYYMMDDHHMM)
+            temp          REAL,               -- ta: 기온(℃)
+            rain          REAL,               -- rn: 강수량(mm), 비 안오면 0
+            wind_speed    REAL,               -- ws: 풍속(m/s)
+            humidity      INTEGER,            -- hm: 습도(%)
+            cloud         INTEGER,            -- dc10Tca: 전운량(0~10)
+            visibility    INTEGER,            -- vs: 시정(m) — 항공 지연 핵심 변수
+            collected_at  TEXT,               -- 이 행을 수집/적재한 시각
+            UNIQUE(stn_id, obs_time)          -- 같은 지점·같은 시각 중복 방지
         )
     """)
 
@@ -95,3 +96,4 @@ def init_db():
 # 이 파일을 직접 실행하면 (py db.py) 테이블을 만든다.
 if __name__ == "__main__":
     init_db()
+    

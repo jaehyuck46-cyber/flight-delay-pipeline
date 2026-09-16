@@ -1,13 +1,16 @@
 """
-weather.py — 김포공항(GMP) 날씨 수집 파일
+weather.py — 서울(108) ASOS 시간관측 수집 파일
 
-역할: 기상청 단기예보 API를 호출해서, '지금 시각의 김포 날씨'를 뽑아
-      DB의 weather 테이블에 1행 저장한다.
-      (collect.py 가 항공편을 담당하듯, 이 파일은 날씨를 담당)
+역할: 기상청 ASOS 시간자료 API를 호출해서, '실제 관측된' 과거 날씨를
+      DB의 weather 테이블에 저장한다. (예보 아님 — 검증된 관측값)
+      김포엔 ASOS 지점이 없어 가장 가까운 서울(108)을 대체 지점으로 쓴다.
+
+      collect.py 가 항공편을 담당하듯, 이 파일은 날씨를 담당한다.
 
 사용법:
-  py weather.py --inspect   # 날씨 출력만 (저장 안 함)
-  py weather.py             # 날씨 수집 -> DB 저장
+  py weather.py --inspect                  # 어제 하루치 관측 출력만 (저장 안 함)
+  py weather.py --backfill 20260826 20260913   # 범위 백필 -> DB 저장
+  py weather.py                            # 어제 하루치 수집 -> DB 저장
 """
 
 import os
@@ -29,66 +32,42 @@ except ImportError:
     pass
 
 # ── 기본 설정 ──────────────────────────────────────────────
-BASE_URL = "https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst"
+ASOS_URL = "https://apis.data.go.kr/1360000/AsosHourlyInfoService/getWthrDataList"
 SERVICE_KEY = (os.getenv("KMA_SERVICE_KEY") or "").strip()   # 기상청 키 (항공편과 별도)
 KST = timezone(timedelta(hours=9))
-TARGET_AIRPORT = "GMP"
-
-# 김포공항의 기상청 격자 좌표 (위경도가 아니라 기상청 전용 바둑판 좌표)
-GIMPO_NX = 58
-GIMPO_NY = 125
-
-# 단기예보 발표 시각: 하루 8번, 정해진 시각에만 발표된다
-BASE_TIMES = [2, 5, 8, 11, 14, 17, 20, 23]
-
-# 우리가 뽑아 쓸 카테고리 코드 → weather 테이블 컬럼 이름 매핑
-#   기상청은 값을 사람 말이 아니라 코드(TMP, PTY...)로 준다
-WANTED = {
-    "TMP": "temp",        # 기온(℃)
-    "PTY": "rain_type",   # 강수형태 0없음/1비/2비눈/3눈/4소나기
-    "SKY": "sky",         # 하늘상태 1맑음/3구름많음/4흐림
-    "WSD": "wind_speed",  # 풍속(m/s)
-    "REH": "humidity",    # 습도(%)
-    "POP": "rain_prob",   # 강수확률(%)
-}
+SEOUL_STN = "108"       # 서울 지점 (김포 대체 — 김포엔 ASOS 지점 없음)
 
 
 def now_kst():
     return datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def latest_base(now):
-    """지금 시각 기준으로 '가장 최근 발표'의 날짜·시각을 계산한다.
+def yesterday():
+    """어제 날짜를 YYYYMMDD로 반환.
 
-    기상청은 아무 때나 예보를 안 주고 02,05,08,11,14,17,20,23시에만 발표한다.
-    발표 직후엔 데이터가 없어서 10분 정도 여유를 두고 이전 발표를 쓴다.
+    ASOS는 '전일(D-1)까지'만 제공한다 (관측값이 품질검증을 거쳐 하루 뒤 확정).
+    그래서 오늘이 아니라 어제까지가 안전하다.
     """
-    hour, minute = now.hour, now.minute
-    avail = [h for h in BASE_TIMES if (hour > h) or (hour == h and minute >= 10)]
-    if avail:
-        bh = max(avail)
-        bdate = now.strftime("%Y%m%d")
-    else:
-        # 오늘 02시 발표조차 아직이면 -> 어제 23시 발표를 사용
-        bh = 23
-        bdate = (now - timedelta(days=1)).strftime("%Y%m%d")
-    return bdate, f"{bh:02d}00"
+    return (datetime.now(KST) - timedelta(days=1)).strftime("%Y%m%d")
 
 
-def fetch_forecast():
-    """기상청 API를 호출해 예보 항목(item) 목록을 통째로 받아온다."""
+def fetch_asos(start_dt, end_dt, stn=SEOUL_STN):
+    """ASOS 시간자료 API를 호출해 관측 데이터(item 리스트)를 받아온다.
+
+    start_dt, end_dt: "YYYYMMDD" 문자열 (예: "20260826")
+    stn: 지점번호 (기본 108=서울)
+    반환: 원본 item 리스트 (한 시간 = 한 item)
+    """
     if not SERVICE_KEY:
         raise RuntimeError("KMA_SERVICE_KEY is missing")
 
-    now = datetime.now(KST)
-    base_date, base_time = latest_base(now)
-
-    # 요청 파라미터를 URL에 붙인다
     url = (
-        f"{BASE_URL}?serviceKey={SERVICE_KEY}"
-        f"&numOfRows=1000&pageNo=1&dataType=JSON"
-        f"&base_date={base_date}&base_time={base_time}"
-        f"&nx={GIMPO_NX}&ny={GIMPO_NY}"
+        f"{ASOS_URL}?serviceKey={SERVICE_KEY}"
+        f"&numOfRows=800&pageNo=1&dataType=JSON"
+        f"&dataCd=ASOS&dateCd=HR"
+        f"&startDt={start_dt}&startHh=00"
+        f"&endDt={end_dt}&endHh=23"
+        f"&stnIds={stn}"
     )
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
 
@@ -110,99 +89,116 @@ def fetch_forecast():
     # 응답 맨 앞에 결과 코드가 있다. "00"이 아니면 에러
     header = data["response"]["header"]
     if header["resultCode"] != "00":
-        raise RuntimeError("KMA API error: " + header["resultCode"] + " / " + header["resultMsg"])
+        raise RuntimeError("ASOS API error: " + header["resultCode"] + " / " + header["resultMsg"])
 
     items = data["response"]["body"]["items"]["item"]
-    print("[weather] fetched " + str(len(items)) + " items (base " + base_date + " " + base_time + ")")
-    return items, base_date, base_time
+    print("[asos] fetched " + str(len(items)) + " rows (" + start_dt + "~" + end_dt + ", stn " + stn + ")")
+    return items
 
 
-def pick_nearest(items):
-    """받아온 예보 중 '가장 가까운 미래 시각' 한 묶음만 골라 한 줄로 정리한다.
-
-    단기예보는 3일치가 다 오기 때문에, 그중 지금과 가장 가까운
-    fcst 시각 하나만 골라서 우리가 원하는 항목만 뽑는다.
-    """
-    now = datetime.now(KST)
-
-    # 각 item에는 fcstDate + fcstTime(예보 대상 시각)이 있다.
-    # 지금 이후(또는 지금과 같은) 시각 중 가장 이른 것을 고른다.
-    def to_dt(it):
-        return datetime.strptime(it["fcstDate"] + it["fcstTime"], "%Y%m%d%H%M").replace(tzinfo=KST)
-
-    future = [it for it in items if to_dt(it) >= now]
-    target_items = future if future else items
-    nearest_dt = min(to_dt(it) for it in target_items)
-
-    # 그 시각의 항목들만 남긴다
-    same = [it for it in target_items if to_dt(it) == nearest_dt]
-
-    # WANTED에 있는 카테고리만 뽑아서 컬럼 이름으로 담는다
-    row = {col: None for col in WANTED.values()}
-    for it in same:
-        cat = it["category"]
-        if cat in WANTED:
-            val = it["fcstValue"]
-            # 숫자로 바꿀 수 있으면 숫자로 (기온·풍속은 소수, 나머지는 정수)
-            try:
-                row[WANTED[cat]] = float(val) if cat in ("TMP", "WSD") else int(float(val))
-            except (ValueError, TypeError):
-                row[WANTED[cat]] = None
-
-    row["fcst_date"] = nearest_dt.strftime("%Y%m%d")
-    row["fcst_time"] = nearest_dt.strftime("%H%M")
-    return row
+def _to_float(v, default=None):
+    """빈 문자열/None -> default, 아니면 float로."""
+    if v in (None, ""):
+        return default
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return default
 
 
-# 코드 → 사람이 읽는 말로 바꾸는 표 (출력용)
-PTY_KOR = {0: "없음", 1: "비", 2: "비/눈", 3: "눈", 4: "소나기"}
-SKY_KOR = {1: "맑음", 3: "구름많음", 4: "흐림"}
+def _to_int(v, default=None):
+    """빈 문자열/None -> default, 아니면 int로 (소수점 오는 경우 대비해 float 경유)."""
+    if v in (None, ""):
+        return default
+    try:
+        return int(float(v))
+    except (TypeError, ValueError):
+        return default
+
+
+def parse_rows(items, stn):
+    """원본 item 리스트를 weather 테이블 컬럼 형태로 정리한다.
+    핵심: rn(강수량)이 비 안오면 빈 문자열 ""로 옴 -> 0 으로 변환."""
+    rows = []
+    collected_at = now_kst()
+    for item in items:
+        tm = (item.get("tm") or "").replace("-", "").replace(":", "").replace(" ", "")
+        rows.append({
+            "stn_id": stn,
+            "obs_time": tm,
+            "temp": _to_float(item.get("ta")),
+            "rain": _to_float(item.get("rn"), default=0.0),
+            "wind_speed": _to_float(item.get("ws")),
+            "humidity": _to_int(item.get("hm")),
+            "cloud": _to_int(item.get("dc10Tca")),
+            "visibility": _to_int(item.get("vs")),
+            "collected_at": collected_at,
+        })
+    return rows
+
+
+def save_many(rows):
+    """여러 관측 행을 한 번에 저장한다 (INSERT OR IGNORE로 중복 방지)."""
+    if not rows:
+        print("[save_many] 저장할 행 없음")
+        return
+
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.executemany("""
+        INSERT OR IGNORE INTO weather
+            (stn_id, obs_time, temp, rain, wind_speed, humidity, cloud, visibility, collected_at)
+        VALUES
+            (:stn_id, :obs_time, :temp, :rain, :wind_speed, :humidity, :cloud, :visibility, :collected_at)
+    """, rows)
+    conn.commit()
+    conn.close()
+    print("[save_many] " + str(len(rows)) + " rows 저장 시도 (중복 제외)")
 
 
 def inspect():
-    print("[inspect] calling KMA API...")
-    items, bd, bt = fetch_forecast()
-    row = pick_nearest(items)
-    print("[inspect] 김포 " + row["fcst_date"] + " " + row["fcst_time"] + " 예보")
-    print("  기온: " + str(row["temp"]) + "℃")
-    print("  강수: " + PTY_KOR.get(row["rain_type"], "?") +
-          "  (강수확률 " + str(row["rain_prob"]) + "%)")
-    print("  하늘: " + SKY_KOR.get(row["sky"], "?"))
-    print("  풍속: " + str(row["wind_speed"]) + " m/s")
-    print("  습도: " + str(row["humidity"]) + "%")
-
-
-def save(row, base_date, base_time):
-    conn = get_connection()
-    cur = conn.cursor()
-    now = now_kst()
-
-    cur.execute("""
-        INSERT INTO weather
-            (airport, base_date, base_time, fcst_date, fcst_time,
-             temp, rain_type, sky, wind_speed, humidity, rain_prob, collected_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-    """, (TARGET_AIRPORT, base_date, base_time, row["fcst_date"], row["fcst_time"],
-          row["temp"], row["rain_type"], row["sky"], row["wind_speed"],
-          row["humidity"], row["rain_prob"], now))
-
-    conn.commit()
-    conn.close()
-    print("[save] weather saved @ " + now +
-          "  (" + PTY_KOR.get(row["rain_type"], "?") +
-          ", " + str(row["temp"]) + "℃, 풍속 " + str(row["wind_speed"]) + ")")
+    """어제 하루치를 받아서 몇 줄 왔는지, 원본이 어떻게 생겼는지 확인만."""
+    print("[inspect] calling ASOS API...")
+    y = yesterday()
+    items = fetch_asos(y, y)
+    print("[inspect] " + str(len(items)) + " rows 수신")
+    if items:
+        # 첫 줄 원본을 그대로 보여준다 (필드 이름 확인용)
+        print("[inspect] 첫 행 원본:")
+        print(json.dumps(items[0], ensure_ascii=False, indent=2))
 
 
 def collect():
+    """기본 실행: 어제 하루치를 수집해 저장한다."""
     init_db()
-    items, base_date, base_time = fetch_forecast()
-    row = pick_nearest(items)
-    save(row, base_date, base_time)
+    y = yesterday()
+    items = fetch_asos(y, y)
+    # rows = parse_rows(items, SEOUL_STN)   # 3단계에서 활성화
+    # save_many(rows)                        # 3단계에서 활성화
+    print("[collect] " + str(len(items)) + " rows 수신 (저장은 3단계 구현 후)")
+
+
+def backfill(start_dt, end_dt):
+    """범위 백필: start_dt~end_dt 관측을 한 번에 받아 저장한다."""
+    init_db()
+    items = fetch_asos(start_dt, end_dt)
+    rows = parse_rows(items, SEOUL_STN)   
+    save_many(rows)                        
+    print("[backfill] " + str(len(items)) + " rows 수신 -> 저장 시도)")
 
 
 if __name__ == "__main__":
     if "--inspect" in sys.argv:
         inspect()
+    elif "--backfill" in sys.argv:
+        idx = sys.argv.index("--backfill")
+        try:
+            start_dt = sys.argv[idx + 1]
+            end_dt = sys.argv[idx + 2]
+        except IndexError:
+            print("사용법: py weather.py --backfill 시작일(YYYYMMDD) 끝일(YYYYMMDD)")
+            sys.exit(1)
+        backfill(start_dt, end_dt)
     else:
         collect()
         
