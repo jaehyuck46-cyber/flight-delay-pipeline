@@ -22,26 +22,32 @@ jobs:
       - name: 라이브러리 설치
         run: pip install requests python-dotenv
 
+      # ── 수집 3종 — 서로 독립. 앞이 실패해도 뒤는 그대로 실행됨 ──
       - name: 데이터 수집 실행
+        if: always()
         env:
           KAC_SERVICE_KEY: ${{ secrets.KAC_SERVICE_KEY }}
         run: python collect.py
 
       - name: 날씨 수집 실행
+        if: always()
         env:
           KMA_SERVICE_KEY: ${{ secrets.KMA_SERVICE_KEY }}
         run: python weather.py
 
-      - name: 수집한 DB를 저장소에 커밋
-        run: |
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
-          git add -f data/flights.db
-          git commit -m "자동 수집 (항공편+날씨)" || echo "변경사항 없음"
-          git push
-
-      - name: 항공기 위치 수집 실행          ← 새 스텩          
+      - name: 항공기 위치 수집 실행
+        if: always()
         env:
           OPENSKY_CLIENT_ID: ${{ secrets.OPENSKY_CLIENT_ID }}
           OPENSKY_CLIENT_SECRET: ${{ secrets.OPENSKY_CLIENT_SECRET }}
         run: python track.py
+
+      # ── 뭐라도 하나 수집됐으면 커밋. 셋 다 죽었을 때만 안 함 ──
+      - name: 수집한 DB를 저장소에 커밋
+        if: always()
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add -f data/flights.db
+          git commit -m "자동 수집 (항공편+날씨+항공기위치)" || echo "변경사항 없음"
+          git push
