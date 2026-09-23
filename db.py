@@ -1,8 +1,8 @@
 """
 db.py — 데이터베이스 담당 파일
 
-역할: SQLite에 연결하고, 테이블 4개를 만든다.
-      (flights · flight_events · collection_log · weather)
+역할: SQLite에 연결하고, 테이블 5개를 만든다.
+      (flights · flight_events · collection_log · weather · flight_tracks)
       (데이터를 '담을 그릇'을 만드는 파일)
 """
 
@@ -23,7 +23,7 @@ def get_connection():
 
 
 def init_db():
-    """테이블 4개를 만든다. 이미 있으면 그냥 넘어감."""
+    """테이블 5개를 만든다. 이미 있으면 그냥 넘어감."""
     conn = get_connection()
     cur = conn.cursor()
 
@@ -85,6 +85,26 @@ def init_db():
             visibility    INTEGER,            -- vs: 시정(m) — 항공 지연 핵심 변수
             collected_at  TEXT,               -- 이 행을 수집/적재한 시각
             UNIQUE(stn_id, obs_time)          -- 같은 지점·같은 시각 중복 방지
+        )
+    """)
+
+    # ── 5. flight_tracks: 김포 상공 항공기 실시간 위치(ADS-B) (스냅샷당 N행) ──
+    #     OpenSky Network states/all API로 '지금 이 순간' 김포 주변 하늘의
+    #     항공기 위치를 30분마다 찍어 쌓는다. 백필 불가 — 실시간만 수집.
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS flight_tracks (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            icao24        TEXT,               -- 기체 고유번호(트랜스폰더 ID)
+            callsign      TEXT,               -- 편명(콜사인)
+            captured_at   TEXT,               -- OpenSky 스냅샷 시각
+            latitude      REAL,               -- 위도
+            longitude     REAL,               -- 경도
+            baro_altitude REAL,               -- 기압고도(m)
+            velocity      REAL,               -- 속도(m/s)
+            true_track    REAL,               -- 진행방향(도, 0~360)
+            on_ground     INTEGER,            -- 지상 여부 (1/0)
+            collected_at  TEXT,               -- 이 행을 수집/적재한 시각
+            UNIQUE(icao24, captured_at)       -- 같은 기체·같은 스냅샷 중복 방지
         )
     """)
 
