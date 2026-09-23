@@ -39,3 +39,9 @@ jobs:
           git add -f data/flights.db
           git commit -m "자동 수집 (항공편+날씨)" || echo "변경사항 없음"
           git push
+
+      - name: 항공기 위치 수집 실행          ← 새 스텩          
+        env:
+          OPENSKY_CLIENT_ID: ${{ secrets.OPENSKY_CLIENT_ID }}
+          OPENSKY_CLIENT_SECRET: ${{ secrets.OPENSKY_CLIENT_SECRET }}
+        run: python track.py
