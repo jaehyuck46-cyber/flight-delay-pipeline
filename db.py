@@ -67,6 +67,18 @@ def init_db():
         )
     """)
 
+    # ── weather 마이그레이션: 옛날 예보 구조 -> 새 ASOS 관측 구조 ──
+    #     CREATE TABLE IF NOT EXISTS는 테이블이 '있기만' 하면 그냥 넘어가서,
+    #     컬럼 구조가 달라도(옛날 예보용 fcst_date 등) 건드리지 않는다.
+    #     그래서 obs_time 컬럼이 없으면(=옛날 구조면) weather를 지우지 않고
+    #     이름만 weather_fcst_old로 바꿔서 보관해두고, 새 이름으로 ASOS 구조를
+    #     새로 만든다 (DROP 하면 되돌릴 수 없어서 RENAME만 사용).
+    cur.execute("PRAGMA table_info(weather)")
+    weather_columns = [row[1] for row in cur.fetchall()]
+    if weather_columns and "obs_time" not in weather_columns:
+        cur.execute("ALTER TABLE weather RENAME TO weather_fcst_old")
+        print("⚠️ weather 테이블이 옛날 예보 구조라 weather_fcst_old로 이름을 바꾸고, ASOS 관측 구조로 새로 만듭니다.")
+
     # ── 4. weather: 서울(108) ASOS 시간관측 (관측시각당 1행) ──
     #     기상청 ASOS 시간자료 API로 '실제 관측된' 과거 날씨를 저장한다.
     #     (예보 아님 — 지난 시각의 검증된 관측값. 백필로 8/26부터 채운다)
