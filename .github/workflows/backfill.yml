@@ -1,0 +1,47 @@
+name: 날씨 백필 (ASOS 관측)
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_dt:
+        description: "시작일 (YYYYMMDD)"
+        required: true
+      end_dt:
+        description: "끝일 (YYYYMMDD)"
+        required: true
+
+# collect.yml과 같은 그룹을 걸어서, 두 워크플로가 동시에 DB를 커밋하다
+# 충돌하지 않도록 한다 (먼저 시작한 쪽이 끝날 때까지 뒤는 대기).
+concurrency:
+  group: db-write
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - name: 코드 내려받기
+        uses: actions/checkout@v4
+
+      - name: 파이썬 설치
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 라이브러리 설치
+        run: pip install requests python-dotenv
+
+      - name: 날씨 백필 실행
+        env:
+          KMA_SERVICE_KEY: ${{ secrets.KMA_SERVICE_KEY }}
+        run: python weather.py --backfill ${{ inputs.start_dt }} ${{ inputs.end_dt }}
+
+      - name: 백필한 DB를 저장소에 커밋
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add -f data/flights.db
+          git commit -m "날씨 백필 (${{ inputs.start_dt }}~${{ inputs.end_dt }})" || echo "변경사항 없음"
+          git push

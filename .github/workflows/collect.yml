@@ -5,6 +5,12 @@ on:
     - cron: "*/30 * * * *"
   workflow_dispatch:
 
+# backfill.yml과 같은 그룹을 걸어서, 두 워크플로가 동시에 DB를 커밋하다
+# 충돌하지 않도록 한다 (먼저 시작한 쪽이 끝날 때까지 뒤는 대기).
+concurrency:
+  group: db-write
+  cancel-in-progress: false
+
 jobs:
   collect:
     runs-on: ubuntu-latest
