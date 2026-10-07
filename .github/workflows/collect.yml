@@ -19,6 +19,8 @@ jobs:
     steps:
       - name: 코드 내려받기
         uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: 파이썬 설치
         uses: actions/setup-python@v5
