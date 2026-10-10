@@ -21,6 +21,19 @@ OUTLIER_MIN = 120         # 이 분 이상 지연이면 이상치
 OUTLIER_DAYS = 7
 WEATHER_STN = "108"       # 서울 ASOS (김포 대체 지점)
 
+# 기상청 ASOS 시정(vs)은 10m 단위로 저장돼 있다 (예: 2557 -> 25,570m).
+# 그래서 m 기준 구간과 비교하기 전에 이 값을 곱한다.
+VIS_UNIT_M = 10
+
+# 시정 구간 (m 환산 후 기준): (라벨, 이상, 미만). None이면 그쪽 끝이 없다는 뜻.
+# weather_delay.py의 VIS_BINS와 같은 경계를 쓴다 (서울 관측값 분포 기준).
+VIS_BINS = [
+    ("흐림·박무", None, 10000),
+    ("보통", 10000, 20000),
+    ("양호", 20000, 30000),
+    ("매우 좋음", 30000, None),
+]
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
@@ -88,6 +101,32 @@ def fmt_ymd(s):
     if not s or len(s) != 8:
         return str(s)
     return f"{s[0:4]}-{s[4:6]}-{s[6:8]}"
+
+
+def fmt_range_km(low, high):
+    """구간 경계(m)를 읽기 쉬운 km 표기로 바꾼다. 예: (10000, 20000) -> '10~20km'"""
+    if low is None:
+        return f"<{high / 1000:g}km"
+    if high is None:
+        return f"≥{low / 1000:g}km"
+    return f"{low / 1000:g}~{high / 1000:g}km"
+
+
+def vis_case_sql():
+    """VIS_BINS를 SQL의 CASE 문으로 바꾼다. 결과는 구간 번호(0, 1, 2, ...).
+
+    visibility는 10m 단위라 VIS_UNIT_M을 곱해 m로 바꾼 뒤 '이상 ~ 미만'으로 비교한다.
+    """
+    vis_m = f"(visibility * {VIS_UNIT_M})"
+    whens = []
+    for i, (_, low, high) in enumerate(VIS_BINS):
+        conds = []
+        if low is not None:
+            conds.append(f"{vis_m} >= {low}")
+        if high is not None:
+            conds.append(f"{vis_m} < {high}")
+        whens.append(f"WHEN {' AND '.join(conds)} THEN {i}")
+    return "CASE " + " ".join(whens) + " END"
 
 
 def stat_line(label, n, avg, rate):
@@ -246,13 +285,8 @@ def brief_weather_join(conn):
             stat_line(label, r["n"], r["avg_delay"], r["delay_rate"])
 
     print("  [시정 구간별]")
-    vis_rows = {r["bucket"]: r for r in conn.execute(joined_cte + """
-        SELECT CASE
-                 WHEN visibility < 500  THEN 1
-                 WHEN visibility < 1000 THEN 2
-                 WHEN visibility < 5000 THEN 3
-                 ELSE 4
-               END                                     AS bucket,
+    vis_rows = {r["bucket"]: r for r in conn.execute(joined_cte + f"""
+        SELECT {vis_case_sql()}                        AS bucket,
                COUNT(*)                                AS n,
                AVG(delay_min)                          AS avg_delay,
                100.0 * SUM(delay_min > 0) / COUNT(*)   AS delay_rate
@@ -260,14 +294,9 @@ def brief_weather_join(conn):
         WHERE obs_time IS NOT NULL AND visibility IS NOT NULL
         GROUP BY bucket
     """)}
-    labels = {
-        1: "    ① <500m (매우 나쁨)",
-        2: "    ② 500~999m (나쁨)",
-        3: "    ③ 1000~4999m (보통)",
-        4: "    ④ ≥5000m (좋음)",
-    }
-    for b, label in labels.items():
-        r = vis_rows.get(b)
+    for i, (name, low, high) in enumerate(VIS_BINS):
+        label = f"    {name} ({fmt_range_km(low, high)})"
+        r = vis_rows.get(i)
         if r is None:
             print("  " + _ljust(label, 30) + "⚠ 데이터 부족")
         else:

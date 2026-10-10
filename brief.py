@@ -16,7 +16,12 @@ from pathlib import Path
 
 DB_PATH = Path(__file__).parent / "data" / "flights.db"
 STALE_HOURS = 5           # 마지막 수집이 이 시간 이상 지났으면 경고
-LOW_VISIBILITY_M = 1000   # 시정이 이 값(m) 미만이면 경고
+# 시정이 이 값(m) 미만이면 경고.
+# weather_delay.py 분석 결과 10km 미만에서만 지연율 상승(17.7% vs 10~12%)이라 이 기준 사용
+LOW_VISIBILITY_M = 10000
+# 기상청 ASOS 시정(vs)은 10m 단위로 저장돼 있다 (예: 2557 -> 25,570m).
+# 그래서 m로 보여주거나 비교하기 전에 이 값을 곱한다.
+VIS_UNIT_M = 10
 KST_OFFSET = timedelta(hours=9)
 
 # 파이프로 출력될 때(예: 다른 프로그램이 결과를 받아갈 때) 윈도우 기본 인코딩(cp949)은
@@ -171,9 +176,10 @@ def brief_weather(conn):
     row("풍속", val(r["wind_speed"], "m/s"))
     row("습도", val(r["humidity"], "%"))
     row("전운량 (0~10)", val(r["cloud"], ""))
-    row("시정", "-" if r["visibility"] is None else f"{r['visibility']:,}m")
-    if r["visibility"] is not None and r["visibility"] < LOW_VISIBILITY_M:
-        print(f"  ⚠ 경고: 시정 {r['visibility']}m — {LOW_VISIBILITY_M}m 미만으로 지연 가능성이 높습니다.")
+    vis_m = None if r["visibility"] is None else r["visibility"] * VIS_UNIT_M
+    row("시정", "-" if vis_m is None else f"{vis_m:,}m")
+    if vis_m is not None and vis_m < LOW_VISIBILITY_M:
+        print(f"  ⚠ 경고: 시정 {vis_m:,}m — {LOW_VISIBILITY_M:,}m 미만으로 지연 가능성이 높습니다.")
 
 
 # ── 4. 항공기 위치 ─────────────────────────────────────────
