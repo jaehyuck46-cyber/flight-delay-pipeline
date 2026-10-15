@@ -102,29 +102,44 @@ def table_exists(conn, name):
 # ── 1. 수집 로그 ───────────────────────────────────────────
 def brief_collection_log(conn):
     section("수집 로그 (collection_log)")
+    # 실패한 실행도 collection_log에 남기 때문에, '마지막 수집'은 성공한 실행만 본다.
+    # (실패 행까지 MAX로 잡으면 수집이 멈춰도 경과 시간이 짧게 나와 경고가 안 뜬다)
     r = conn.execute("""
-        SELECT MAX(collected_at)              AS last_at,
+        SELECT MAX(CASE WHEN success = 1 THEN collected_at END) AS last_ok,
+               MAX(CASE WHEN success = 0 THEN collected_at END) AS last_fail,
                COUNT(*)                       AS total,
                COALESCE(SUM(success), 0)      AS ok,
                COALESCE(SUM(1 - success), 0)  AS fail
         FROM collection_log
     """).fetchone()
-    if r["total"] == 0 or r["last_at"] is None:
+    if r["total"] == 0:
         print("  ⚠ 데이터 없음")
         return
 
-    # collected_at은 수집 스크립트가 한국시간(KST)으로 기록한다.
-    # 비교 기준은 UTC라서, 9시간을 빼서 UTC로 맞춘 뒤 경과 시간을 계산한다.
-    last_kst = datetime.strptime(r["last_at"], "%Y-%m-%d %H:%M:%S")
-    elapsed = utcnow() - (last_kst - KST_OFFSET)
-
-    row("마지막 수집 (KST)", r["last_at"])
-    row("경과 시간", fmt_elapsed(elapsed))
     row("총 실행 횟수", f"{r['total']:,}회")
     row("성공", f"{r['ok']:,}회")
     row("실패", f"{r['fail']:,}회")
-    if elapsed >= timedelta(hours=STALE_HOURS):
-        print(f"  ⚠ 경고: 마지막 수집 후 {STALE_HOURS}시간 이상 지났습니다. 수집이 멈췄는지 확인하세요.")
+
+    if r["last_ok"] is None:
+        print("  ⚠ 경고: 성공한 수집 기록이 없습니다.")
+    else:
+        # collected_at은 수집 스크립트가 한국시간(KST)으로 기록한다.
+        # 비교 기준은 UTC라서, 9시간을 빼서 UTC로 맞춘 뒤 경과 시간을 계산한다.
+        last_kst = datetime.strptime(r["last_ok"], "%Y-%m-%d %H:%M:%S")
+        elapsed = utcnow() - (last_kst - KST_OFFSET)
+        row("마지막 성공 수집 (KST)", r["last_ok"])
+        row("경과 시간", fmt_elapsed(elapsed))
+        if elapsed >= timedelta(hours=STALE_HOURS):
+            print(f"  ⚠ 경고: 마지막 성공 수집 후 {STALE_HOURS}시간 이상 지났습니다. 수집이 멈췄는지 확인하세요.")
+
+    # 가장 최근 실패가 마지막 성공보다 뒤라면, 지금 실패가 이어지는 중일 수 있다.
+    if r["last_fail"] is not None and (r["last_ok"] is None or r["last_fail"] > r["last_ok"]):
+        msg = conn.execute(
+            "SELECT error_message FROM collection_log WHERE success = 0 "
+            "ORDER BY collected_at DESC LIMIT 1"
+        ).fetchone()["error_message"]
+        row("마지막 실패 (KST)", r["last_fail"])
+        print(f"  ⚠ 최근 실행이 실패했습니다: {msg}")
 
 
 # ── 2. 항공편 ──────────────────────────────────────────────
@@ -180,6 +195,14 @@ def brief_weather(conn):
     row("시정", "-" if vis_m is None else f"{vis_m:,}m")
     if vis_m is not None and vis_m < LOW_VISIBILITY_M:
         print(f"  ⚠ 경고: 시정 {vis_m:,}m — {LOW_VISIBILITY_M:,}m 미만으로 지연 가능성이 높습니다.")
+
+    # 오래됨 경고: ASOS는 어제(D-1) 자료가 오늘 늦게 올라와서, 오전에는 최신 관측이
+    # '그저께 23시'인 게 정상이다. 그래서 그보다 더 오래됐을 때만 날씨 수집이 밀린 것으로 본다.
+    # obs_time은 한국시간이라 기준 시각도 한국시간(UTC+9)으로 만든다.
+    today_kst = (utcnow() + KST_OFFSET).date()
+    cutoff = (today_kst - timedelta(days=2)).strftime("%Y%m%d") + "2300"
+    if r["obs_time"] < cutoff:
+        print(f"  ⚠ 경고: 최신 관측이 그저께 23시({fmt_dt12(cutoff)})보다 오래됐습니다. 날씨 수집을 확인하세요.")
 
 
 # ── 4. 항공기 위치 ─────────────────────────────────────────
