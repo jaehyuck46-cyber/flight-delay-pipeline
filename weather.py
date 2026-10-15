@@ -80,13 +80,15 @@ def fetch_asos(start_dt, end_dt, stn=SEOUL_STN):
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
 
         # 재시도: 통신 에러가 나면 쉬었다가 다시 (최대 3번) — collect.py 와 동일 패턴
+        # URLError는 '연결' 단계 실패만 잡는다. 연결된 뒤 응답을 '읽다가' 시간이 넘으면
+        # TimeoutError(= socket.timeout)가 따로 나서, 둘 다 같은 규칙으로 재시도한다.
         text = None
         for attempt in range(1, 4):
             try:
                 with urllib.request.urlopen(req, timeout=60) as r:
                     text = r.read().decode("utf-8")
                 break
-            except urllib.error.URLError as e:
+            except (urllib.error.URLError, TimeoutError) as e:
                 print("[retry] page " + str(page) + " attempt " + str(attempt) + " failed: " + str(e))
                 if attempt == 3:
                     raise
