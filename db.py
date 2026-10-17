@@ -30,7 +30,7 @@ def init_db():
     # ── 1. flights: 편별 '현재 상태' (편당 1행) ──
     cur.execute("""
         CREATE TABLE IF NOT EXISTS flights (
-            flight_key   TEXT PRIMARY KEY,   -- 편명+날짜+출도착 (중복 방지 고유키)
+            flight_key   TEXT PRIMARY KEY,   -- API fid — 같은 편이 재번호되면 중복 가능, BACKLOG 3번 참고
             flight_id    TEXT,               -- 편명 (예: KE1234)
             airline      TEXT,               -- 항공사
             airport      TEXT,               -- 공항 (GMP 등)
