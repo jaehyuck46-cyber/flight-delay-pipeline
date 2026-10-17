@@ -4,12 +4,14 @@ weather_delay.py — 날씨와 항공편 지연의 관계를 분석하는 파일
 역할: flights 테이블(도착편)과 weather 테이블(정시 관측값)을
       '예상도착시각에서 가장 가까운 정각' 기준으로 결합해서,
       비/시정/바람 조건에 따라 지연율이 어떻게 달라지는지 비교한다.
+      마지막에 두 그룹 차이가 '우연인지 아닌지' 통계 검정(카이제곱·t-검정)도 한다.
 
 이 파일은 DB를 읽기만 한다 (SELECT만 사용). 테이블 구조나 데이터를 바꾸지 않는다.
 
 사용법: py weather_delay.py
 """
 
+import math
 import sqlite3
 import sys
 import unicodedata
@@ -47,6 +49,13 @@ MIN_SAMPLE = 30
 
 # 표에서 라벨이 차지할 화면 폭 (한글은 2칸으로 계산)
 LABEL_WIDTH = 18
+
+# 유의수준: '이 정도 차이가 순전히 우연으로 나올 확률(p-값)'이 이 값보다 작으면
+# 우연이 아니라고 본다. 0.05 = 같은 실험을 100번 해서 5번 이하로만 우연히 나올 정도.
+SIG_LEVEL = 0.05
+
+# 5번 섹션(검정) 라벨은 'A vs B' 형태라 길어서 칸을 따로 넓게 잡는다
+TEST_LABEL_WIDTH = 22
 
 
 def parse_dt(text):
@@ -217,6 +226,166 @@ def print_stat_row(label, stats, min_sample=None):
     print(line)
 
 
+def chi2_2x2_pvalue(a_yes, a_no, b_yes, b_no):
+    """카이제곱 검정: 두 그룹의 '지연율' 차이가 우연인지 본다. p-값을 돌려준다.
+
+    비유: 동전 두 개를 던져 앞면 비율이 다를 때, 그 차이가 동전 탓인지
+    운 탓인지 따지는 것. '두 그룹이 사실 똑같다'고 가정했을 때 기대되는 개수와
+    실제 개수가 얼마나 벌어졌는지를 하나의 점수(chi2)로 만든다.
+
+    표 모양 (2×2):
+                 지연     정시
+        그룹 A   a_yes    a_no
+        그룹 B   b_yes    b_no
+
+    - Yates 보정: 칸이 2×2일 때 점수가 부풀려지는 것을 막으려고 차이에서 0.5씩 깎는다.
+      (scipy.stats.chi2_contingency의 기본 동작과 같다)
+    - 자유도 1인 카이제곱의 p-값은 math.erfc(√(chi2/2))로 정확히 구할 수 있다.
+    - 어떤 행/열 합이 0이면(한쪽이 비었거나 전부 지연/전부 정시) 계산할 수 없어 None.
+    """
+    n = a_yes + a_no + b_yes + b_no
+    row_a, row_b = a_yes + a_no, b_yes + b_no
+    col_yes, col_no = a_yes + b_yes, a_no + b_no
+    if 0 in (row_a, row_b, col_yes, col_no):
+        return None
+
+    # 2×2에서는 네 칸 모두 '실제 - 기대' 차이의 크기가 |ad - bc| / n 으로 같다.
+    diff = abs(a_yes * b_no - a_no * b_yes) / n
+    # Yates 보정: 차이를 0.5 줄이되, 기대값을 넘어 반대로 가지는 않게 0에서 멈춘다.
+    adj = max(diff - 0.5, 0.0)
+    # 네 칸의 (차이² / 기대값)을 더한 값. 2×2에서는 아래 한 줄로 정리된다.
+    chi2 = adj * adj * n ** 3 / (row_a * row_b * col_yes * col_no)
+    return math.erfc(math.sqrt(chi2 / 2))
+
+
+def _betacf(a, b, x):
+    """불완전 베타 함수의 연분수 부분 (Numerical Recipes 'betacf').
+
+    비유: 무한히 이어지는 분수를, 값이 더 이상 거의 안 바뀔 때까지 한 단계씩
+    계산해 나가는 방법. t-분포의 꼬리 넓이(p-값)를 구하는 데 쓴다.
+    """
+    max_iter, eps, fpmin = 300, 3e-14, 1e-300
+    qab, qap, qam = a + b, a + 1.0, a - 1.0
+    c = 1.0
+    d = 1.0 - qab * x / qap
+    if abs(d) < fpmin:
+        d = fpmin
+    d = 1.0 / d
+    h = d
+    for m in range(1, max_iter + 1):
+        m2 = 2 * m
+        aa = m * (b - m) * x / ((qam + m2) * (a + m2))
+        d = 1.0 + aa * d
+        if abs(d) < fpmin:
+            d = fpmin
+        c = 1.0 + aa / c
+        if abs(c) < fpmin:
+            c = fpmin
+        d = 1.0 / d
+        h *= d * c
+        aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2))
+        d = 1.0 + aa * d
+        if abs(d) < fpmin:
+            d = fpmin
+        c = 1.0 + aa / c
+        if abs(c) < fpmin:
+            c = fpmin
+        d = 1.0 / d
+        delta = d * c
+        h *= delta
+        if abs(delta - 1.0) < eps:
+            break
+    return h
+
+
+def _betai(a, b, x):
+    """정규화 불완전 베타 함수 I_x(a, b) (Numerical Recipes 'betai').
+
+    t-분포의 양쪽 꼬리 넓이 = I_{df/(df+t²)}(df/2, 1/2) 라서 이 함수로 p-값을 구한다.
+    x가 크면 연분수가 느리게 수렴하므로, 대칭 관계 I_x(a,b) = 1 - I_{1-x}(b,a)를 쓴다.
+    """
+    if x <= 0.0:
+        return 0.0
+    if x >= 1.0:
+        return 1.0
+    # 앞에 곱하는 계수. 큰 수끼리 곱하면 넘치므로 로그(lgamma)로 계산한 뒤 exp.
+    ln_front = (math.lgamma(a + b) - math.lgamma(a) - math.lgamma(b)
+                + a * math.log(x) + b * math.log(1.0 - x))
+    front = math.exp(ln_front)
+    if x < (a + 1.0) / (a + b + 2.0):
+        return front * _betacf(a, b, x) / a
+    return 1.0 - front * _betacf(b, a, 1.0 - x) / b
+
+
+def welch_t_pvalue(values_a, values_b):
+    """Welch t-검정: 두 그룹의 '평균 지연(분)' 차이가 우연인지 본다. (t, p)를 돌려준다.
+
+    비유: 두 반의 평균 점수 차이가, 각 반 점수가 들쭉날쭉한 정도에 비해
+    큰지 작은지를 보는 것. 들쭉날쭉(분산)이 클수록 평균 차이가 우연일 가능성이 크다.
+
+    - Welch 방식: 두 그룹의 분산이 달라도 쓸 수 있는 t-검정
+      (비 온 날은 지연이 훨씬 들쭉날쭉해서 '분산이 같다'는 가정을 하면 안 된다).
+    - 자유도는 Welch–Satterthwaite 식으로 구하고, p-값은 양측(차이의 방향 무관)이다.
+    - 표본이 2개 미만이거나 두 그룹 분산이 모두 0이면 계산할 수 없어 (None, None).
+    """
+    na, nb = len(values_a), len(values_b)
+    if na < 2 or nb < 2:
+        return None, None
+    mean_a = sum(values_a) / na
+    mean_b = sum(values_b) / nb
+    # 표본 분산 (n-1로 나눔)
+    var_a = sum((v - mean_a) ** 2 for v in values_a) / (na - 1)
+    var_b = sum((v - mean_b) ** 2 for v in values_b) / (nb - 1)
+    se_a, se_b = var_a / na, var_b / nb
+    if se_a + se_b == 0:
+        return None, None
+
+    t = (mean_a - mean_b) / math.sqrt(se_a + se_b)
+    df = (se_a + se_b) ** 2 / (se_a ** 2 / (na - 1) + se_b ** 2 / (nb - 1))
+    p = _betai(df / 2.0, 0.5, df / (df + t * t))
+    return t, p
+
+
+def fmt_p(p):
+    """p-값을 읽기 쉽게: None -> '계산불가', 아주 작으면 '<0.001', 나머지는 소수 3자리."""
+    if p is None:
+        return "계산불가"
+    if p < 0.001:
+        return "<0.001"
+    return f"{p:.3f}"
+
+
+def print_test_row(label, group_a, group_b):
+    """두 그룹에 카이제곱(지연율)·Welch t(평균 지연) 검정을 하고 결과를 한 줄로 출력한다.
+
+    판정은 보수적으로: 두 p-값이 '모두' SIG_LEVEL 미만일 때만 유의미하다고 본다.
+    둘 중 하나라도 크면 '아직 판단 불가'(데이터가 더 쌓이면 바뀔 수 있음).
+    """
+    name = label + " " * max(TEST_LABEL_WIDTH - visual_len(label), 0)
+    if not group_a or not group_b:
+        print(f"  {name} : 한쪽 그룹이 비어 있어 검정 불가")
+        return
+
+    a_yes = sum(1 for r in group_a if r["delay_min"] > DELAY_THRESHOLD_MIN)
+    b_yes = sum(1 for r in group_b if r["delay_min"] > DELAY_THRESHOLD_MIN)
+    p_chi = chi2_2x2_pvalue(a_yes, len(group_a) - a_yes, b_yes, len(group_b) - b_yes)
+    _, p_t = welch_t_pvalue([r["delay_min"] for r in group_a],
+                            [r["delay_min"] for r in group_b])
+
+    if p_chi is not None and p_t is not None and p_chi < SIG_LEVEL and p_t < SIG_LEVEL:
+        verdict = "✅ 유의미 (우연일 가능성 낮음)"
+    else:
+        verdict = "❌ 아직 판단 불가"
+
+    line = (
+        f"  {name} : {len(group_a):>5} vs {len(group_b):>5}건   "
+        f"카이제곱 p={fmt_p(p_chi):>6}   t-검정 p={fmt_p(p_t):>6}   {verdict}"
+    )
+    if min(len(group_a), len(group_b)) < MIN_SAMPLE:
+        line += "   ⚠ 표본 부족"
+    print(line)
+
+
 def main():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -256,6 +425,15 @@ def main():
     strong_wind, weak_wind = split_by(matched, "wind_speed", lambda v: v >= 8)
     print_stat_row("강풍", summarize(strong_wind))
     print_stat_row("약풍", summarize(weak_wind))
+
+    # 5) 유의성 검정: 위 2)~4)의 차이가 우연인지 아닌지
+    print(f"\n── 5) 유의성 검정 (유의수준 {SIG_LEVEL}) ──")
+    print_test_row("비 온 날 vs 맑은 날", rainy, clear)
+    low_vis, high_vis = split_by(matched, "visibility", lambda v: v * VIS_UNIT_M < 10000)
+    print_test_row("시정 <10km vs ≥10km", low_vis, high_vis)
+    print_test_row("강풍 vs 약풍", strong_wind, weak_wind)
+    print("  ※ 같은 날·같은 비행기 편끼리는 서로 영향을 주므로(연결편 지연),")
+    print("    실제 p-값은 위 숫자보다 조금 덜 확실하다고 보는 게 안전하다.")
 
 
 if __name__ == "__main__":
