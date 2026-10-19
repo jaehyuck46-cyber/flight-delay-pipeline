@@ -20,6 +20,11 @@ MIN_AIRLINE_SAMPLE = 30   # 항공사별 지연율은 이 편수 이상인 항�
 OUTLIER_MIN = 120         # 이 분 이상 지연이면 이상치
 OUTLIER_DAYS = 7
 WEATHER_STN = "108"       # 서울 ASOS (김포 대체 지점)
+D15_MIN = 15              # D15 지연율: 15분 '초과' 지연 비율 (항공 업계 정시성 기준)
+
+# 민감도 확인용: 이 날짜(YYYYMMDD)를 빼고도 비 효과가 유지되는지 한 줄 더 보여준다.
+# 2026-10-18은 서울에 51.4mm가 온 날이라, 이 하루가 비 효과를 혼자 끌어올렸는지 확인하려는 것.
+SENSITIVITY_EXCLUDE_DATES = ("20261018",)
 
 # 기상청 ASOS 시정(vs)은 10m 단위로 저장돼 있다 (예: 2557 -> 25,570m).
 # 그래서 m 기준 구간과 비교하기 전에 이 값을 곱한다.
@@ -129,12 +134,49 @@ def vis_case_sql():
     return "CASE " + " ".join(whens) + " END"
 
 
-def stat_line(label, n, avg, rate):
-    """그룹 하나(편수·평균지연·지연율)를 한 줄로."""
+def median(values):
+    """중앙값: 줄 세웠을 때 한가운데 값. SQLite엔 MEDIAN 함수가 없어 파이썬에서 계산한다.
+
+    평균은 452분 같은 큰 지연 몇 건에 끌려가지만, 중앙값은 '보통 편'의 지연을 보여준다.
+    """
+    s = sorted(values)
+    n = len(s)
+    mid = n // 2
+    return s[mid] if n % 2 else (s[mid - 1] + s[mid]) / 2
+
+
+def delay_stats(delays):
+    """지연(분) 목록으로 편수·평균·중앙값·지연율(>0분)·D15 지연율(>15분)을 계산한다. 비면 None."""
+    n = len(delays)
+    if n == 0:
+        return None
+    return {
+        "n": n,
+        "avg": sum(delays) / n,
+        "med": median(delays),
+        "r0": 100.0 * sum(1 for d in delays if d > 0) / n,
+        "r15": 100.0 * sum(1 for d in delays if d > D15_MIN) / n,
+    }
+
+
+def stat_header():
+    """stat_line 표의 머리글."""
+    print("  " + _ljust("", 30)
+          + _rjust("편수", 9) + _rjust("평균", 10) + _rjust("중앙값", 10)
+          + _rjust(">0분", 9) + _rjust("D15", 9))
+
+
+def stat_line(label, s):
+    """그룹 하나(편수·평균·중앙값·지연율·D15 지연율)를 한 줄로. s가 None이면 '데이터 부족'."""
+    if s is None:
+        print("  " + _ljust(label, 30) + "⚠ 데이터 부족")
+        return
     print("  " + _ljust(label, 30)
-          + _rjust(f"{n:,}편", 9)
-          + _rjust(f"평균 {avg:+.1f}분", 15)
-          + _rjust(f"지연율 {rate:.1f}%", 15))
+          + _rjust(f"{s['n']:,}편", 9)
+          + _rjust(f"{s['avg']:+.1f}분", 10)
+          + _rjust(f"{s['med']:+.0f}분", 10)
+          + _rjust(f"{s['r0']:.1f}%", 9)
+          + _rjust(f"{s['r15']:.1f}%", 9))
 
 
 # ── 1. 커버리지 ────────────────────────────────────────────
@@ -171,6 +213,7 @@ def brief_delay_summary(conn):
         SELECT COUNT(*)            AS n,
                AVG(delay_min)      AS avg_delay,
                SUM(delay_min > 0)  AS delayed,
+               SUM(delay_min > {D15_MIN}) AS delayed15,
                MAX(delay_min)      AS max_delay
         FROM base
     """).fetchone()
@@ -178,10 +221,13 @@ def brief_delay_summary(conn):
         print("  ⚠ 데이터 부족")
         return
     rate = 100.0 * r["delayed"] / r["n"]
+    rate15 = 100.0 * r["delayed15"] / r["n"]
     row("분석 대상 편수", f"{r['n']:,}편")
     row("평균 지연", f"{r['avg_delay']:+.1f}분")
     row("지연 편수 (>0분)", f"{r['delayed']:,}편")
     row("지연율", f"{rate:.1f}%")
+    row(f"D15 지연 편수 (>{D15_MIN}분)", f"{r['delayed15']:,}편")
+    row(f"D15 지연율 (>{D15_MIN}분)", f"{rate15:.1f}%")
     row("최대 지연", f"{r['max_delay']:.0f}분")
     print("  ※ 평균이 음수면 계획보다 일찍 도착한 편이 더 많다는 뜻")
 
@@ -248,7 +294,7 @@ def brief_weather_join(conn):
             FROM flights WHERE {BASE_WHERE}
         ),
         joined AS (
-            SELECT b.delay_min, w.obs_time, w.rain, w.visibility
+            SELECT b.hh, b.delay_min, w.obs_time, w.rain, w.visibility
             FROM base b
             LEFT JOIN weather w
               ON w.stn_id = '{WEATHER_STN}' AND substr(w.obs_time, 1, 10) = b.hh
@@ -267,40 +313,70 @@ def brief_weather_join(conn):
         print("  ⚠ 데이터 부족 — 날씨와 겹치는 기간의 항공편이 없습니다")
         return
 
-    print("  [비 유무별]")
-    rain_rows = {r["grp"]: r for r in conn.execute(joined_cte + """
-        SELECT CASE WHEN rain > 0 THEN 'rain' ELSE 'dry' END AS grp,
-               COUNT(*)                                AS n,
-               AVG(delay_min)                          AS avg_delay,
-               100.0 * SUM(delay_min > 0) / COUNT(*)   AS delay_rate
+    # 중앙값은 SQL로 못 구해서, 날씨가 붙은 편을 한 번에 가져와 파이썬에서 묶는다.
+    matched = conn.execute(joined_cte + f"""
+        SELECT hh, delay_min, rain, visibility, {vis_case_sql()} AS bucket
         FROM joined
-        WHERE obs_time IS NOT NULL AND rain IS NOT NULL
+        WHERE obs_time IS NOT NULL
+    """).fetchall()
+
+    print("  [비 유무별]")
+    stat_header()
+    rain_known = [r for r in matched if r["rain"] is not None]
+    rainy = [r["delay_min"] for r in rain_known if r["rain"] > 0]
+    dry = [r["delay_min"] for r in rain_known if r["rain"] <= 0]
+    stat_line("    비 옴 (rain > 0)", delay_stats(rainy))
+    stat_line("    비 안 옴 (rain = 0)", delay_stats(dry))
+
+    # 민감도: 같은 날짜를 양쪽 그룹에서 모두 빼고 다시 비교한다.
+    # 그래도 차이가 비슷하면, 그 하루가 결과를 혼자 만든 게 아니다.
+    excluded = [r for r in rain_known if r["hh"][:8] not in SENSITIVITY_EXCLUDE_DATES]
+    days = ",".join(f"{d[4:6]}/{d[6:8]}" for d in SENSITIVITY_EXCLUDE_DATES)
+    stat_line(f"    비 옴 ({days} 제외)",
+              delay_stats([r["delay_min"] for r in excluded if r["rain"] > 0]))
+    stat_line(f"    비 안 옴 ({days} 제외)",
+              delay_stats([r["delay_min"] for r in excluded if r["rain"] <= 0]))
+
+    # 결항률: 결항한 편은 도착 시각이 없어 위 지연 표에 안 들어가므로 따로 센다.
+    # 분모는 상태가 기록된 편 전체(빈 상태 = 아직 안 온 편·중복 유령 행은 제외, BACKLOG 3번).
+    # 날씨는 위와 같이 '계획 시각의 정시 관측'에 붙인다.
+    cancel = {r["grp"]: r for r in conn.execute(f"""
+        WITH base AS (
+            SELECT substr(scheduled_dt, 1, 10) AS hh, status
+            FROM flights
+            WHERE status IS NOT NULL AND status != '' AND length(scheduled_dt) = 12
+        )
+        SELECT CASE WHEN w.rain > 0 THEN 'rain' ELSE 'dry' END   AS grp,
+               COUNT(*)                                          AS n,
+               SUM(b.status = '결항')                             AS cancelled,
+               SUM(b.status = '사전결항')                         AS pre_cancelled
+        FROM base b
+        JOIN weather w
+          ON w.stn_id = '{WEATHER_STN}' AND substr(w.obs_time, 1, 10) = b.hh
+        WHERE w.rain IS NOT NULL
         GROUP BY grp
     """)}
+    print("  [비 유무별 결항률] 분모 = 상태가 기록된 편")
+    print("  " + _ljust("", 30) + _rjust("분모", 10) + _rjust("결항", 16) + _rjust("사전결항", 16))
     for key, label in (("rain", "    비 옴 (rain > 0)"), ("dry", "    비 안 옴 (rain = 0)")):
-        r = rain_rows.get(key)
-        if r is None:
+        r = cancel.get(key)
+        if r is None or r["n"] == 0:
             print("  " + _ljust(label, 30) + "⚠ 데이터 부족")
         else:
-            stat_line(label, r["n"], r["avg_delay"], r["delay_rate"])
+            n = r["n"]
+            print("  " + _ljust(label, 30)
+                  + _rjust(f"{n:,}편", 10)
+                  + _rjust(f"{r['cancelled']:,}편 {100.0 * r['cancelled'] / n:.2f}%", 16)
+                  + _rjust(f"{r['pre_cancelled']:,}편 {100.0 * r['pre_cancelled'] / n:.2f}%", 16))
+    # 사전결항은 보통 며칠 전에 확정돼서, 계획 시각의 날씨를 보고 정한 게 아닐 가능성이 크다.
+    print("    (참고: 사전결항은 날씨 인과 약함 — 며칠 전 확정되는 경우가 많음)")
 
     print("  [시정 구간별]")
-    vis_rows = {r["bucket"]: r for r in conn.execute(joined_cte + f"""
-        SELECT {vis_case_sql()}                        AS bucket,
-               COUNT(*)                                AS n,
-               AVG(delay_min)                          AS avg_delay,
-               100.0 * SUM(delay_min > 0) / COUNT(*)   AS delay_rate
-        FROM joined
-        WHERE obs_time IS NOT NULL AND visibility IS NOT NULL
-        GROUP BY bucket
-    """)}
+    stat_header()
     for i, (name, low, high) in enumerate(VIS_BINS):
         label = f"    {name} ({fmt_range_km(low, high)})"
-        r = vis_rows.get(i)
-        if r is None:
-            print("  " + _ljust(label, 30) + "⚠ 데이터 부족")
-        else:
-            stat_line(label, r["n"], r["avg_delay"], r["delay_rate"])
+        stat_line(label, delay_stats([r["delay_min"] for r in matched
+                                      if r["visibility"] is not None and r["bucket"] == i]))
 
 
 # ── 6. 이상치 ──────────────────────────────────────────────
