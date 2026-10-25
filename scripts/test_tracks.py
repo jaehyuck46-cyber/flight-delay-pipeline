@@ -4,14 +4,19 @@ scripts/test_tracks.py — OpenSky /tracks/all 엔드포인트 시험용 (DB에 
 /tracks/all 로 기체의 비행 궤적을 받아 김포 접근 궤적 분석에 쓸 만한지 숫자로 확인한다.
 /tracks/all 은 OpenSky가 '실험적'이라고 밝힌 엔드포인트라 404·빈 응답이 날 수 있다.
 
-  1차(--live)   : flight_tracks에서 최근 24시간 안에 떠 있던 기체 3대 → time=0(지금 비행 중인 궤적)
-  2차(--history): 최근 7일 김포 도착편 중 콜사인이 flight_tracks와 맞는 3편
-                  → time=그 편을 포착한 시각(과거 특정 비행의 궤적)
+  1차(--live)    : flight_tracks에서 최근 24시간 안에 떠 있던 기체 3대 → time=0(지금 비행 중인 궤적)
+  2차(--history) : 최근 7일 김포 도착편 중 콜사인이 flight_tracks와 맞는 3편
+                   → time=그 편을 포착한 시각(과거 특정 비행의 궤적)
+  3차(--arrivals): /flights/arrival 로 어제 김포(RKSS) 도착편 목록을 받아 flights 테이블과 비교
+  --snapshot     : 지금 김포 상공을 나는 기체 1대의 궤적(time=0)을 scripts/out/에 JSON으로 저장
+                   (몇 시간 뒤 같은 비행을 과거 조회해서 점이 줄어드는지 비교하려는 준비)
 
 사용법:
-  py scripts/test_tracks.py             # 1차 + 2차
-  py scripts/test_tracks.py --live      # 1차만
-  py scripts/test_tracks.py --history   # 2차만
+  py scripts/test_tracks.py              # 1차 + 2차
+  py scripts/test_tracks.py --live       # 1차만 (옵션은 여러 개 같이 써도 된다)
+  py scripts/test_tracks.py --history    # 2차만
+  py scripts/test_tracks.py --arrivals   # 3차만
+  py scripts/test_tracks.py --snapshot   # 스냅샷 저장만
 """
 
 import json
@@ -56,6 +61,13 @@ BIG_DELAY_MIN = 60        # 가능하면 1편은 이만큼 이상 지연된 편�
 # 같은 콜사인은 매일 반복되므로, 그 편의 예상 도착 시각 근처에서 포착된 것만 '같은 비행'으로 본다.
 MATCH_BEFORE = timedelta(hours=3)
 MATCH_AFTER = timedelta(minutes=30)
+
+# ── 3차·스냅샷 설정 ─────────────────────────────────────────
+ARRIVAL_URL = "https://opensky-network.org/api/flights/arrival"
+GIMPO_ICAO = "RKSS"
+# 2차의 매핑을 뒤집은 것: 콜사인 'KAL1238' → 편명 'KE1238'
+ICAO_TO_IATA = {icao: iata for iata, icao in IATA_TO_ICAO.items()}
+SNAPSHOT_DIR = Path(__file__).resolve().parent / "out"
 
 
 def ro_conn():
@@ -269,15 +281,152 @@ def test_history(token):
         print_response(*fetch_track(c["icao24"], token, t), expected_callsign=c["callsign"])
 
 
+# ── 공통: 크레딧 소비량 재기 ────────────────────────────────
+def get_json(url, token):
+    """GET 요청 하나. 반환: (HTTP 상태, 남은 크레딧 헤더, 본문 JSON 또는 오류 텍스트)."""
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            remaining = r.headers.get("X-Rate-Limit-Remaining")
+            body = r.read().decode("utf-8")
+            return r.status, remaining, (json.loads(body) if body.strip() else None)
+    except urllib.error.HTTPError as e:
+        with e:
+            return e.code, e.headers.get("X-Rate-Limit-Remaining"), e.read().decode("utf-8", "ignore")[:200]
+
+
+def states_in_gimpo(token):
+    """지금 김포 박스 안의 기체 목록(states/all). 남은 크레딧 기준값을 재는 데도 쓴다.
+
+    작은 영역 조회라 크레딧이 가장 적게 드는 요청이다(소비량 측정의 기준점).
+    """
+    url = (f"{track.STATES_URL}?lamin={track.GIMPO_LAT_MIN}&lamax={track.GIMPO_LAT_MAX}"
+           f"&lomin={track.GIMPO_LON_MIN}&lomax={track.GIMPO_LON_MAX}")
+    return get_json(url, token)
+
+
+# ── 3차: 공항 도착편 목록 (/flights/arrival) ─────────────────
+def kst_day_bounds_unix(day):
+    """한국시간 날짜(date) 하루의 [00:00, 24:00) 를 UTC 유닉스 초로. 예: 10/18 KST = 10/17 15:00 UTC부터."""
+    start = datetime(day.year, day.month, day.day, tzinfo=track.KST)
+    return int(start.timestamp()), int((start + timedelta(days=1)).timestamp())
+
+
+def to_iata_flight_id(callsign):
+    """'KAL1238' → 'KE1238'. 매핑에 없는 항공사면 None."""
+    cs = (callsign or "").strip()
+    iata = ICAO_TO_IATA.get(cs[:3])
+    number = cs[3:]
+    if iata is None or not number.isdigit():
+        return None
+    return iata + number
+
+
+def arrived_flight_ids(day_str):
+    """flights 테이블에서 그 날(KST, 계획 시각 기준) 김포 '도착' 편명 집합."""
+    conn = ro_conn()
+    rows = conn.execute("""
+        SELECT DISTINCT flight_id FROM flights
+        WHERE status = '도착' AND airport = 'GMP' AND substr(scheduled_dt, 1, 8) = ?
+    """, (day_str,)).fetchall()
+    conn.close()
+    # 편 번호 앞 0 표기가 섞여도 맞춰지게 정규화 (7C0122 → 7C122)
+    return {r["flight_id"][:2] + r["flight_id"][2:].lstrip("0") for r in rows if r["flight_id"]}
+
+
+def try_arrivals(day, token):
+    """하루치 도착편을 요청해 결과를 출력한다. 응답에 편이 있으면 True."""
+    begin, end = kst_day_bounds_unix(day)
+    day_str = day.strftime("%Y%m%d")
+    print(f"■ {day:%Y-%m-%d} KST  (begin={begin}, end={end} / UTC "
+          f"{datetime.fromtimestamp(begin, timezone.utc):%m-%d %H:%M} ~ "
+          f"{datetime.fromtimestamp(end, timezone.utc):%m-%d %H:%M})")
+
+    _, before, _ = states_in_gimpo(token)
+    status, after, body = get_json(f"{ARRIVAL_URL}?airport={GIMPO_ICAO}&begin={begin}&end={end}", token)
+    used = (int(before) - int(after)) if (before and after) else None
+    print(f"    HTTP {status}   남은 크레딧 {before} → {after}"
+          f"   (이 요청 소비 ≈ {used if used is not None else '측정 불가'})")
+
+    if status != 200 or not isinstance(body, list) or not body:
+        print(f"    응답 없음/비어 있음: {body!r}\n" if status != 200 else "    반환 편수 0\n")
+        return False
+
+    ours = arrived_flight_ids(day_str)
+    mapped = {to_iata_flight_id(f.get("callsign")) for f in body} - {None}
+    unmapped = sum(1 for f in body if to_iata_flight_id(f.get("callsign")) is None)
+    print(f"    OpenSky 반환 편수                 : {len(body)}")
+    print(f"    flights '도착' 편수 (같은 날)      : {len(ours)}")
+    print(f"    콜사인 역변환 성공 (서로 다른 편명): {len(mapped)}   (매핑 밖 콜사인 {unmapped}건)")
+    print(f"    flights와 일치한 편수             : {len(mapped & ours)}"
+          f"   (일치율: 우리 도착편 기준 {len(mapped & ours) / len(ours) * 100:.0f}%)" if ours else "")
+    print(f"    OpenSky에만 있음 / 우리에만 있음   : {len(mapped - ours)} / {len(ours - mapped)}")
+    others = sorted({(f.get('callsign') or '').strip()[:3] for f in body
+                     if to_iata_flight_id(f.get('callsign')) is None})
+    print(f"    매핑 밖 콜사인 앞 3글자           : {', '.join(others) or '-'}\n")
+    return True
+
+
+def test_arrivals(token):
+    print("==== 3차: /flights/arrival (어제 김포 도착편) ====\n")
+    today = datetime.now(track.KST).date()
+    # 도착 목록은 야간 배치로 갱신될 수 있어, 어제가 비면 그저께로 한 번 더 시도한다.
+    if not try_arrivals(today - timedelta(days=1), token):
+        print("  어제 응답이 비어 그저께로 다시 시도합니다.\n")
+        try_arrivals(today - timedelta(days=2), token)
+
+
+# ── 스냅샷: 지금 김포 상공 기체 1대의 궤적 저장 ────────────────
+def take_snapshot(token):
+    print("==== 스냅샷: 김포 박스 안 비행 중 기체 1대 → scripts/out/ ====\n")
+    status, _, raw = states_in_gimpo(token)
+    states = (raw.get("states") or []) if status == 200 and isinstance(raw, dict) else []
+    airborne = [s for s in states if not s[track.IDX["on_ground"]]
+                and s[track.IDX["baro_altitude"]] is not None]
+    if not airborne:
+        print(f"    지금 김포 박스 안에 비행 중인 기체가 없습니다 (states HTTP {status}).\n")
+        return
+    # 가장 낮게 나는 기체 = 이착륙 중일 가능성이 커서 김포 접근 궤적 비교에 알맞다
+    s = min(airborne, key=lambda x: x[track.IDX["baro_altitude"]])
+    icao24 = s[track.IDX["icao24"]]
+    callsign = (s[track.IDX["callsign"]] or "").strip()
+    status, remaining, body = fetch_track(icao24, token, 0)
+    print(f"    대상 {icao24} ({callsign or '-'}) 고도 {s[track.IDX['baro_altitude']]:.0f}m"
+          f"   tracks HTTP {status}, 남은 크레딧 {remaining}")
+    if status != 200 or not body:
+        print(f"    궤적을 받지 못해 저장하지 않습니다: {body!r}\n")
+        return
+
+    fetched = datetime.now(track.KST)
+    SNAPSHOT_DIR.mkdir(exist_ok=True)
+    out = SNAPSHOT_DIR / f"track_{icao24}_{fetched:%Y%m%d_%H%M%S}.json"
+    out.write_text(json.dumps({
+        "fetched_at_kst": fetched.strftime("%Y-%m-%d %H:%M:%S"),
+        "fetched_at_unix": int(fetched.timestamp()),
+        "icao24": icao24,
+        "callsign_from_states": callsign,
+        "query": {"endpoint": TRACKS_URL, "icao24": icao24, "time": 0},
+        "response": body,
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
+    report(body)
+    print(f"    저장: {out}\n")
+
+
 def main():
-    run_live = "--history" not in sys.argv
-    run_history = "--live" not in sys.argv
+    opts = {a for a in sys.argv[1:] if a.startswith("--")}
+    if not opts:
+        opts = {"--live", "--history"}  # 옵션 없이 실행하면 예전처럼 1차 + 2차
     token = track.get_token()
     print(f"인증 모드: {'OAuth2 토큰' if token else '익명'}\n")
-    if run_live:
+    if "--live" in opts:
         test_live(token)
-    if run_history:
+    if "--history" in opts:
         test_history(token)
+    if "--arrivals" in opts:
+        test_arrivals(token)
+    if "--snapshot" in opts:
+        take_snapshot(token)
 
 
 if __name__ == "__main__":

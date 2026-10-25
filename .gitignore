@@ -6,3 +6,4 @@ test.py
 *.parquet
 Untitled-*.py
 analyze
+scripts/out/
