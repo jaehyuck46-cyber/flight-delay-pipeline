@@ -26,6 +26,20 @@ D15_MIN = 15              # D15 지연율: 15분 '초과' 지연 비율 (항공 
 # 2026-10-18은 서울에 51.4mm가 온 날이라, 이 하루가 비 효과를 혼자 끌어올렸는지 확인하려는 것.
 SENSITIVITY_EXCLUDE_DATES = ("20261018",)
 
+# 유령 행 판별 조건 (flights 테이블 별칭 f 기준). brief.py의 GHOST_COND와 같은 조건이다.
+# API가 같은 편에 고유번호(fid)를 새로 매기면, 옛 번호 행이 상태가 빈 채로 남는다 (BACKLOG 3번).
+# "상태가 비었는데, 편명·계획 시각이 같고 상태가 있는 다른 행이 있으면" 유령 행으로 본다.
+GHOST_COND = """(
+    (f.status IS NULL OR f.status = '')
+    AND EXISTS (
+        SELECT 1 FROM flights g
+        WHERE g.flight_id = f.flight_id
+          AND g.scheduled_dt = f.scheduled_dt
+          AND g.flight_key <> f.flight_key
+          AND g.status IS NOT NULL AND g.status <> ''
+    )
+)"""
+
 # 기상청 ASOS 시정(vs)은 10m 단위로 저장돼 있다 (예: 2557 -> 25,570m).
 # 그래서 m 기준 구간과 비교하기 전에 이 값을 곱한다.
 VIS_UNIT_M = 10
@@ -194,8 +208,10 @@ def brief_coverage(conn):
     if f["n"] == 0:
         row("flights", "⚠ 데이터 부족")
     else:
+        ghost = conn.execute(f"SELECT COUNT(*) FROM flights f WHERE {GHOST_COND}").fetchone()[0]
         row("flights 기간", f"{fmt_ymd(f['d0'])} ~ {fmt_ymd(f['d1'])}")
         row("flights 행수", f"{f['n']:,}편")
+        row("flights 실제 편수 (유령 제외)", f"{f['n'] - ghost:,}편")
     if w["n"] == 0:
         row("weather", "⚠ 데이터 부족")
     else:

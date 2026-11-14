@@ -284,15 +284,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-conn = get_connection()
-cur = conn.cursor()
-rows = cur.execute("""
-    SELECT flight_id, airport, scheduled_dt, status, collected_at
-    FROM flights
-    WHERE status IS NULL OR status = ''
-    LIMIT 15
-""").fetchall()
-for r in rows:
-    print(dict(r))
-conn.close()

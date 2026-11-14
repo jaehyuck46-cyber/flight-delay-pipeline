@@ -24,6 +24,22 @@ LOW_VISIBILITY_M = 10000
 VIS_UNIT_M = 10
 KST_OFFSET = timedelta(hours=9)
 
+# 유령 행 판별 조건 (flights 테이블 별칭 f 기준, WHERE나 CASE에 그대로 넣어 쓴다).
+# collect.py가 API의 fid를 flight_key로 쓰는데, API가 같은 편에 fid를 새로 매기면
+# 새 행이 생기고 옛 fid 행은 상태가 빈 채로 남는다 (BACKLOG 3번).
+# 그래서 "상태가 비었는데, 편명·계획 시각이 같고 상태가 있는 다른 행이 있으면" 유령 행으로 본다.
+# data_brief.py에도 같은 조건이 있으니, 고칠 때는 두 곳을 함께 고친다.
+GHOST_COND = """(
+    (f.status IS NULL OR f.status = '')
+    AND EXISTS (
+        SELECT 1 FROM flights g
+        WHERE g.flight_id = f.flight_id
+          AND g.scheduled_dt = f.scheduled_dt
+          AND g.flight_key <> f.flight_key
+          AND g.status IS NOT NULL AND g.status <> ''
+    )
+)"""
+
 # 파이프로 출력될 때(예: 다른 프로그램이 결과를 받아갈 때) 윈도우 기본 인코딩(cp949)은
 # ⚠ 같은 기호를 못 찍고 에러가 난다. 그래서 출력 인코딩을 UTF-8로 고정한다.
 if hasattr(sys.stdout, "reconfigure"):
@@ -155,17 +171,42 @@ def brief_flights(conn):
         "SELECT COUNT(*) FROM flights WHERE substr(scheduled_dt,1,8) = ?", (today,)
     ).fetchone()[0]
 
-    row("전체 편수", f"{total:,}편")
+    # 상태가 빈 행을 세 종류로 나눈다. 위에서부터 먼저 맞는 쪽으로 분류하므로 서로 겹치지 않는다.
+    #   ghost  : 유령 행 (같은 편의 진짜 행이 따로 있음)
+    #   future : 아직 오지 않은 편 (상태가 없는 게 정상)
+    #   past   : 계획 시각이 지났는데 상태도 짝도 없는 편 (진짜 누락 후보)
+    # scheduled_dt는 한국시간이라, '지금'도 한국시간(UTC+9)으로 만들어 비교한다.
+    now_kst = (utcnow() + KST_OFFSET).strftime("%Y%m%d%H%M")
+    blank = {r["kind"]: r["n"] for r in conn.execute(f"""
+        SELECT CASE
+                 WHEN {GHOST_COND} THEN 'ghost'
+                 WHEN f.scheduled_dt >= ? THEN 'future'
+                 ELSE 'past'
+               END AS kind,
+               COUNT(*) AS n
+        FROM flights f
+        WHERE f.status IS NULL OR f.status = ''
+        GROUP BY kind
+    """, (now_kst,))}
+    ghost = blank.get("ghost", 0)
+
+    row("전체 행수 (유령 포함)", f"{total:,}행")
+    row("  └ 유령 행", f"{ghost:,}행")
+    row("실제 편수 (유령 제외)", f"{total - ghost:,}편")
     row(f"오늘 편수 ({today}, UTC 기준)", f"{today_cnt:,}편")
 
     print("  [상태별]")
     for r in conn.execute("""
-        SELECT COALESCE(NULLIF(status, ''), '(빈값)') AS st, COUNT(*) AS n
+        SELECT status AS st, COUNT(*) AS n
         FROM flights
+        WHERE status IS NOT NULL AND status != ''
         GROUP BY st
         ORDER BY n DESC
     """):
         row("    " + r["st"], f"{r['n']:,}편")
+    row("    (빈값) 유령 행", f"{ghost:,}편")
+    row("    (빈값) 미래 편", f"{blank.get('future', 0):,}편")
+    row("    (빈값) 과거·짝 없음", f"{blank.get('past', 0):,}편")
 
 
 # ── 3. 날씨 ────────────────────────────────────────────────
