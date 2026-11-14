@@ -26,6 +26,11 @@ D15_MIN = 15              # D15 지연율: 15분 '초과' 지연 비율 (항공 
 # 2026-10-18은 서울에 51.4mm가 온 날이라, 이 하루가 비 효과를 혼자 끌어올렸는지 확인하려는 것.
 SENSITIVITY_EXCLUDE_DATES = ("20261018",)
 
+# 시간대별 비 효과 확인용 구간 (계획 시각 KST, 양끝 포함). 예: "07-11"은 7~11시.
+# 비 온 편이 지연 많은 시간대(예: 14시)에 몰려서 비 효과가 과장된 건 아닌지 보려는 것.
+HOUR_BANDS = [("07-11", 7, 11), ("12-15", 12, 15), ("16-19", 16, 19), ("20-22", 20, 22)]
+HOUR_BAND_MIN_SAMPLE = 30   # 구간 안에서 이 편수 미만인 그룹은 '⚠ 표본 부족'
+
 # 유령 행 판별 조건 (flights 테이블 별칭 f 기준). brief.py의 GHOST_COND와 같은 조건이다.
 # API가 같은 편에 고유번호(fid)를 새로 매기면, 옛 번호 행이 상태가 빈 채로 남는다 (BACKLOG 3번).
 # "상태가 비었는데, 편명·계획 시각이 같고 상태가 있는 다른 행이 있으면" 유령 행으로 본다.
@@ -193,6 +198,43 @@ def stat_line(label, s):
           + _rjust(f"{s['r15']:.1f}%", 9))
 
 
+def d15_rate(delays):
+    """지연(분) 목록의 D15 지연율(%)만 계산한다. 비면 None."""
+    n = len(delays)
+    return None if n == 0 else 100.0 * sum(1 for v in delays if v > D15_MIN) / n
+
+
+def hourband_header():
+    """[시간대별 비 효과] 표의 머리글."""
+    print("  " + _ljust("", 10)
+          + _rjust("비 편수", 9) + _rjust("비 D15", 8)
+          + _rjust("안옴 편수", 10) + _rjust("안옴 D15", 9)
+          + _rjust("배수", 7) + _rjust("배수(제외)", 11))
+
+
+def hourband_row(label, rainy, dry, rainy_ex, dry_ex):
+    """시간대 구간 하나(비/안옴 편수·D15·배수, 민감도 제외 배수)를 한 줄로.
+
+    rainy/dry: 그 구간의 비 옴/안 옴 delay_min 리스트. *_ex는 민감도 날짜를 뺀 버전.
+    배수 = 비 옴 D15 ÷ 안 옴 D15. 안 옴 쪽이 비어 있으면(0건) 배수를 구할 수 없어 '-'.
+    """
+    r_rate, dr_rate = d15_rate(rainy), d15_rate(dry)
+    ratio = f"{r_rate / dr_rate:.1f}배" if (r_rate is not None and dr_rate) else "-"
+    r_rate_ex, dr_rate_ex = d15_rate(rainy_ex), d15_rate(dry_ex)
+    ratio_ex = f"{r_rate_ex / dr_rate_ex:.1f}배" if (r_rate_ex is not None and dr_rate_ex) else "-"
+
+    line = ("  " + _ljust(label, 10)
+            + _rjust(f"{len(rainy):,}편", 9)
+            + _rjust(f"{r_rate:.1f}%" if r_rate is not None else "-", 8)
+            + _rjust(f"{len(dry):,}편", 10)
+            + _rjust(f"{dr_rate:.1f}%" if dr_rate is not None else "-", 9)
+            + _rjust(ratio, 7)
+            + _rjust(ratio_ex, 11))
+    if min(len(rainy), len(dry)) < HOUR_BAND_MIN_SAMPLE:
+        line += "   ⚠ 표본 부족"
+    print(line)
+
+
 # ── 1. 커버리지 ────────────────────────────────────────────
 def brief_coverage(conn):
     section("1. 데이터 커버리지")
@@ -352,6 +394,52 @@ def brief_weather_join(conn):
               delay_stats([r["delay_min"] for r in excluded if r["rain"] > 0]))
     stat_line(f"    비 안 옴 ({days} 제외)",
               delay_stats([r["delay_min"] for r in excluded if r["rain"] <= 0]))
+
+    # ── 비 × 시간대 교란 확인 ──
+    # 목적: "비 효과"가 사실은 "비 온 편이 지연 많은 시간대(14시 등)에 몰려서" 생긴
+    # 착시인지 보는 것. 시간대를 고정하고 비교해도 배수가 살아 있으면 착시가 아니다.
+    print("  [시간대별 비 효과]")
+    hourband_header()
+    for label, lo, hi in HOUR_BANDS:
+        band = [r for r in rain_known if lo <= int(r["hh"][8:10]) <= hi]
+        band_ex = [r for r in band if r["hh"][:8] not in SENSITIVITY_EXCLUDE_DATES]
+        hourband_row(
+            label,
+            [r["delay_min"] for r in band if r["rain"] > 0],
+            [r["delay_min"] for r in band if r["rain"] <= 0],
+            [r["delay_min"] for r in band_ex if r["rain"] > 0],
+            [r["delay_min"] for r in band_ex if r["rain"] <= 0],
+        )
+
+    # 시간대 보정: 비 그룹의 '시(hour)'별 편수 구성에, 안 옴 그룹의 시간별 D15를
+    # 가중평균해서 "비가 전혀 지연에 영향이 없고 시간대 구성 차이만 있었다면" 나왔을
+    # D15를 구한다. 이 값이 실제 비 그룹 D15보다 많이 낮으면, 시간대 착시가 아니라
+    # 비 자체가 지연을 늘린다는 뜻이다.
+    dry_hour_total, dry_hour_d15 = {}, {}
+    for r in rain_known:
+        if r["rain"] is not None and r["rain"] <= 0:
+            h = int(r["hh"][8:10])
+            dry_hour_total[h] = dry_hour_total.get(h, 0) + 1
+            if r["delay_min"] > D15_MIN:
+                dry_hour_d15[h] = dry_hour_d15.get(h, 0) + 1
+
+    rainy_all = [r for r in rain_known if r["rain"] > 0]
+    weighted_sum, weighted_n = 0.0, 0
+    for r in rainy_all:
+        h = int(r["hh"][8:10])
+        if dry_hour_total.get(h):
+            weighted_sum += dry_hour_d15.get(h, 0) / dry_hour_total[h]
+            weighted_n += 1
+    expected = 100.0 * weighted_sum / weighted_n if weighted_n else None
+    actual = d15_rate([r["delay_min"] for r in rainy_all])
+    row("시간대 보정: 기대 D15 vs 실제 D15",
+        f"{expected:.1f}% vs {actual:.1f}%" if expected is not None and actual is not None
+        else "⚠ 데이터 부족")
+
+    # 비 온 날짜 수: 편수(711편)가 많아 보여도 실제로는 며칠 안 되는 비에 몰려 있을 수
+    # 있어서, 표본이 '며칠 치'인지를 따로 보여준다.
+    rain_dates = {r["hh"][:8] for r in rain_known if r["rain"] > 0}
+    row("비 온 날짜 수", f"{len(rain_dates)}일")
 
     # 결항률: 결항한 편은 도착 시각이 없어 위 지연 표에 안 들어가므로 따로 센다.
     # 분모는 상태가 기록된 편 전체(빈 상태 = 아직 안 온 편·중복 유령 행은 제외, BACKLOG 3번).
