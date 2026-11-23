@@ -2,9 +2,10 @@
 viz.py — 저장된 데이터로 정적 차트(HTML) 하나를 만든다.
 
 역할: flights.db를 읽어 '항공사별/시간대별 15분 지연율'을 계산하고,
-      그 숫자를 박아넣은 docs/index.html 파일을 만든다.
+      그 숫자를 박아넣은 docs/viz.html 파일을 만든다.
       (analyze.py가 '터미널에 출력'했다면, viz.py는 '웹페이지로 저장')
-사용법: py viz.py  →  docs/index.html 생성 → 브라우저로 열어 확인
+      docs/index.html은 dashboard.json을 읽는 대시보드라서 여기서 덮어쓰지 않는다.
+사용법: py viz.py  →  docs/viz.html 생성 → 브라우저로 열어 확인
 """
 
 import json
@@ -15,7 +16,7 @@ from datetime import datetime
 from db import get_connection
 
 OUT_DIR = Path(__file__).parent / "docs"
-OUT_PATH = OUT_DIR / "index.html"
+OUT_PATH = OUT_DIR / "viz.html"
 
 
 def _parse_dt(text):

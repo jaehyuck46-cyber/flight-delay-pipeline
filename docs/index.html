@@ -1,51 +1,413 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ko">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>김포공항 도착편 지연 분석</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<title>김포공항 도착 지연</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.js"></script>
 <style>
-  body { font-family: system-ui, sans-serif; max-width: 900px; margin: 40px auto; padding: 0 16px; color:#222; }
-  h1 { font-size: 1.5rem; }
-  h2 { font-size: 1.1rem; margin-top: 0; }
-  .meta { color: #666; font-size: 0.9rem; margin-bottom: 32px; }
-  .card { margin-bottom: 48px; }
+  :root {
+    --bg: #FAFAFA;
+    --line: #E6E7EA;
+    --text: #111318;
+    --muted: #6B7079;
+    --blue: #2563EB;
+    --blue-soft: #BFD3FB;
+    --orange: #EA7A2E;
+    --track: #ECEEF1;
+    --good: #16A34A;
+    --warn: #EAB308;
+    --bad: #DC2626;
+    --sans: "Noto Sans KR", system-ui, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  [hidden] { display: none !important; }
+
+  #error {
+    position: fixed; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--muted); font-size: 15px;
+  }
+
+  main { max-width: 1040px; margin: 0 auto; padding: 32px 24px 28px; }
+
+  .top {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding-bottom: 20px; border-bottom: 1px solid var(--line);
+  }
+  .brand { display: flex; align-items: center; gap: 16px; min-width: 0; }
+  .badge {
+    font-family: var(--mono); font-weight: 600; font-size: 13px; letter-spacing: .04em;
+    background: var(--text); color: #fff; border-radius: 999px; padding: 4px 12px;
+  }
+  h1 { font-size: 22px; font-weight: 700; margin: 0; letter-spacing: -.01em; }
+  .updated { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; white-space: nowrap; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.ok { background: var(--good); }
+  .dot.warn { background: var(--warn); }
+  .dot.stale { background: var(--bad); }
+
+  .kpis {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    border-bottom: 1px solid var(--line);
+    padding: 20px 0;
+  }
+  .kpi { padding: 4px 28px; border-left: 1px solid var(--line); min-width: 0; }
+  .kpi:first-child { padding-left: 0; border-left: 0; }
+  .kpi-label { font-size: 15px; font-weight: 500; }
+  .kpi-value { font-family: var(--mono); font-size: 44px; font-weight: 500; line-height: 1.2; margin: 6px 0 4px; letter-spacing: -.02em; }
+  .kpi-value .unit { font-family: var(--sans); font-weight: 700; font-size: .82em; }
+  .kpi-sub { font-size: 15px; color: var(--muted); }
+  .kpi-sub .num { font-size: 15px; }
+  .blue { color: var(--blue); }
+  .orange { color: var(--orange); }
+  .good { color: var(--good); }
+  .bad { color: var(--bad); }
+
+  .block { padding: 24px 0 20px; border-bottom: 1px solid var(--line); }
+  .block-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+  h2 { font-size: 17px; font-weight: 700; margin: 0; }
+  .caption { color: var(--muted); font-size: 13px; }
+  .chart-wrap { position: relative; height: 200px; }
+
+  .lists { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid var(--line); padding: 24px 0 20px; }
+  .list { min-width: 0; padding-right: 28px; }
+  .list + .list { padding: 0 0 0 28px; border-left: 1px solid var(--line); }
+  .list-title { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
+  .list-title::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+  .rows { display: grid; gap: 10px; }
+  .row { display: grid; grid-template-columns: 6.5em 1fr 4.5em; align-items: center; gap: 14px; font-size: 15px; }
+  .row-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row-value { font-family: var(--mono); text-align: right; }
+  .bar-cell { position: relative; height: 12px; }
+  .bar-cell::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; border-top: 1px dotted var(--line); }
+  .bar { position: relative; height: 100%; border-radius: 6px; background: var(--blue-soft); }
+  .list .caption { margin: 14px 0 0; }
+
+  .rain-rows .row { grid-template-columns: 6.5em 1fr 4.5em; }
+  .track { height: 12px; border-radius: 6px; background: var(--track); overflow: hidden; }
+  .fill { height: 100%; border-radius: 6px; }
+  .fill.rain { background: var(--orange); }
+  .fill.clear { background: var(--blue); }
+
+  footer { text-align: center; color: var(--muted); font-size: 12px; padding-top: 24px; }
+  footer a { color: inherit; text-decoration: none; }
+  footer a:hover { color: var(--text); }
+
+  @media (max-width: 640px) {
+    main { padding: 20px 16px 24px; }
+    h1 { font-size: 18px; }
+    .brand { gap: 10px; }
+    .kpis { grid-template-columns: 1fr 1fr; padding: 0; }
+    .kpi { padding: 16px 0 16px 16px; }
+    .kpi:nth-child(odd) { padding-left: 0; border-left: 0; }
+    .kpi:nth-child(n+3) { border-top: 1px solid var(--line); }
+    .kpi-value { font-size: 32px; }
+    .kpi-label, .kpi-sub, .kpi-sub .num { font-size: 13px; }
+    .lists { grid-template-columns: 1fr; padding: 0; }
+    .list { padding: 20px 0; }
+    .list + .list { padding: 20px 0; border-left: 0; border-top: 1px solid var(--line); }
+    .row, .rain-rows .row { grid-template-columns: 5.5em 1fr 4em; gap: 10px; font-size: 14px; }
+    .block-head { flex-direction: column; gap: 4px; }
+    .chart-wrap { height: 180px; }
+  }
 </style>
 </head>
 <body>
-  <h1>김포공항(GMP) 도착편 지연 분석</h1>
-  <p class="meta">대상: 도착 완료편 2183건 · 생성 2026-09-10 14:39</p>
+<div id="error" hidden>데이터를 불러오지 못했어요</div>
 
-  <div class="card">
-    <h2>항공사별 15분 지연율 (20편 이상)</h2>
-    <canvas id="airlineChart"></canvas>
-  </div>
+<main id="app" hidden>
+  <header class="top">
+    <div class="brand"><span class="badge">GMP</span><h1>김포공항 도착 지연</h1></div>
+    <div class="updated"><span class="dot" id="statusDot"></span><span><span class="num" id="updated"></span> 갱신</span></div>
+  </header>
 
-  <div class="card">
-    <h2>시간대별 15분 지연율</h2>
-    <canvas id="hourChart"></canvas>
-  </div>
+  <section class="kpis">
+    <div class="kpi">
+      <div class="kpi-label">오늘 지연율</div>
+      <div class="kpi-value blue" id="todayRate"></div>
+      <div class="kpi-sub" id="todayDiff"></div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">누적 평균</div>
+      <div class="kpi-value" id="cumRate"></div>
+      <div class="kpi-sub" id="cumSub"></div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">오늘 도착</div>
+      <div class="kpi-value" id="todayArrived"></div>
+      <div class="kpi-sub" id="dailyAvg"></div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">비 올 때</div>
+      <div class="kpi-value orange" id="rainRatio"></div>
+      <div class="kpi-sub num" id="rainVs"></div>
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="block-head"><h2>최근 30일 지연율</h2><span class="caption" id="trendCaption"></span></div>
+    <div class="chart-wrap"><canvas id="trend" aria-label="최근 30일 일별 지연율 선 그래프" role="img"></canvas></div>
+  </section>
+
+  <section class="lists">
+    <div class="list">
+      <h2 class="list-title">늦는 항공사</h2>
+      <div class="rows" id="airlines"></div>
+      <p class="caption" id="airlineCaption"></p>
+    </div>
+    <div class="list">
+      <h2 class="list-title">늦는 시간대</h2>
+      <div class="rows" id="hours"></div>
+      <p class="caption" id="hourCaption"></p>
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="block-head"><h2>비 오면 얼마나 늦을까</h2><span class="caption" id="rainCaption"></span></div>
+    <div class="rows rain-rows">
+      <div class="row">
+        <span class="row-label">비 올 때</span>
+        <div class="track"><div class="fill rain" id="rainBar"></div></div>
+        <span class="row-value" id="rainValue"></span>
+      </div>
+      <div class="row">
+        <span class="row-label">맑을 때</span>
+        <div class="track"><div class="fill clear" id="clearBar"></div></div>
+        <span class="row-value" id="clearValue"></span>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    출처: 한국공항공사 · 기상청 ASOS(서울 108) · 15분 초과 지연 기준 ·
+    <a class="num" href="https://github.com/jaehyuck46-cyber/flight-delay-pipeline" target="_blank" rel="noopener">GitHub ↗</a>
+  </footer>
+</main>
 
 <script>
-  const airlineLabels = ["이스타항공", "제주항공", "진에어", "대한항공", "에어서울", "티웨이항공", "아시아나항공", "파라타항공", "에어부산", "일본항공", "피치항공", "전일본공수", "섬에어"];
-  const airlineValues = [30.7, 21.9, 19.2, 12.7, 12.5, 10.7, 10.5, 8.7, 7.5, 7.3, 5.3, 5.1, 4.2];
-  const hourLabels = ["07시", "08시", "09시", "10시", "11시", "12시", "13시", "14시", "15시", "16시", "17시", "18시", "19시", "20시", "21시", "22시"];
-  const hourValues = [2.8, 0.0, 6.2, 11.0, 10.3, 5.5, 9.8, 28.6, 19.0, 17.5, 20.6, 28.2, 19.6, 12.6, 11.7, 18.1];
+const DASH = "—";
+const $ = (id) => document.getElementById(id);
+const isNum = (v) => typeof v === "number" && Number.isFinite(v);
 
-  new Chart(document.getElementById('airlineChart'), {
-    type: 'bar',
-    data: { labels: airlineLabels,
-            datasets: [{ label: '15분 지연율(%)', data: airlineValues }] },
-    options: { scales: { y: { beginAtZero: true } } }
-  });
+const pct = (v) => (isNum(v) ? v.toFixed(1) + "%" : DASH);
+const int = (v) => (isNum(v) ? v.toLocaleString("en-US") : DASH);
+const md = (iso) => (iso ? `${+iso.slice(5, 7)}/${+iso.slice(8, 10)}` : DASH);
+const mmdd = (iso) => `${iso.slice(5, 7)}/${iso.slice(8, 10)}`;
 
-  new Chart(document.getElementById('hourChart'), {
-    type: 'bar',
-    data: { labels: hourLabels,
-            datasets: [{ label: '15분 지연율(%)', data: hourValues }] },
-    options: { scales: { y: { beginAtZero: true } } }
+function setHTML(id, html) { $(id).innerHTML = html; }
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function withUnit(value, unit) {
+  return value === DASH ? DASH : `${value}<span class="unit">${unit}</span>`;
+}
+
+function renderHeader(d) {
+  const gen = d.meta.generated_at;
+  $("updated").textContent = gen ? gen.slice(11, 16) : DASH;
+  const status = d.health.flights.status;
+  if (["ok", "warn", "stale"].includes(status)) $("statusDot").classList.add(status);
+  $("statusDot").title = `수집 상태: ${status ?? DASH}`;
+}
+
+function renderKpis(d, trendPast) {
+  const today = d.summary.today, cum = d.summary.cumulative;
+  const rain = d.weather_effect.rain, clear = d.weather_effect.clear;
+
+  $("todayRate").textContent = pct(today.delay_rate_pct);
+  if (isNum(today.delay_rate_pct) && isNum(cum.delay_rate_pct)) {
+    const diff = Math.round((today.delay_rate_pct - cum.delay_rate_pct) * 10) / 10;
+    const sign = diff > 0 ? "+" : diff < 0 ? "−" : "±";
+    const cls = diff > 0 ? "bad" : diff < 0 ? "good" : "";
+    setHTML("todayDiff", `<span class="${cls}">평균보다 <span class="num">${sign}${Math.abs(diff).toFixed(1)}%p</span></span>`);
+  } else {
+    setHTML("todayDiff", `평균보다 <span class="num">${DASH}</span>`);
+  }
+
+  $("cumRate").textContent = pct(cum.delay_rate_pct);
+  setHTML("cumSub", `<span class="num">${int(cum.arrived)}</span>편 · <span class="num">${md(cum.since)}</span>부터`);
+
+  setHTML("todayArrived", withUnit(int(today.arrived), "편"));
+  const arrivals = trendPast.map((r) => r.arrived).filter(isNum);
+  const avg = arrivals.length ? Math.round(arrivals.reduce((a, b) => a + b, 0) / arrivals.length) : null;
+  setHTML("dailyAvg", `하루 평균 <span class="num">${int(avg)}</span>편`);
+
+  const r = rain.delay_rate_pct, c = clear.delay_rate_pct;
+  $("rainRatio").textContent = isNum(r) && isNum(c) && c > 0 ? "×" + (r / c).toFixed(1) : DASH;
+  $("rainVs").textContent = `${pct(r)} vs ${pct(c)}`;
+}
+
+function renderTrend(d, trendPast) {
+  $("trendCaption").textContent = `${d.meta.delay_threshold_min ?? DASH}분 초과 · 일별`;
+  const avg = d.summary.cumulative.delay_rate_pct;
+  const labels = trendPast.map((r) => mmdd(r.date));
+  const values = trendPast.map((r) => (isNum(r.delay_rate_pct) ? r.delay_rate_pct : null));
+  const peak = Math.max(0, ...values.filter(isNum), isNum(avg) ? avg : 0);
+  const yMax = Math.max(20, Math.ceil(peak / 20) * 20);
+  const last = labels.length - 1, mid = Math.floor(last / 2);
+
+  const avgLabel = {
+    id: "avgLabel",
+    afterDatasetsDraw(chart) {
+      if (!isNum(avg)) return;
+      const { ctx, chartArea, scales } = chart;
+      const y = scales.y.getPixelForValue(avg);
+      ctx.save();
+      ctx.font = "12px 'JetBrains Mono', monospace";
+      ctx.fillStyle = "#6B7079";
+      ctx.textAlign = "right";
+      ctx.textBaseline = "bottom";
+      ctx.fillText(`평균 ${avg.toFixed(1)}%`, chartArea.right, y - 4);
+      ctx.restore();
+    },
+  };
+
+  Chart.defaults.font.family = "'JetBrains Mono', monospace";
+  Chart.defaults.font.size = 12;
+  Chart.defaults.color = "#6B7079";
+
+  new Chart($("trend"), {
+    type: "line",
+    data: {
+      labels,
+      datasets: [
+        {
+          data: values,
+          borderColor: "#2563EB",
+          backgroundColor: "rgba(37, 99, 235, 0.08)",
+          borderWidth: 2,
+          fill: "origin",
+          tension: 0,
+          pointRadius: 0,
+          pointHoverRadius: 4,
+          pointBackgroundColor: "#2563EB",
+        },
+        {
+          data: labels.map(() => (isNum(avg) ? avg : null)),
+          borderColor: "#9CA1AA",
+          borderWidth: 1,
+          borderDash: [5, 4],
+          pointRadius: 0,
+          pointHoverRadius: 0,
+          fill: false,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          filter: (item) => item.datasetIndex === 0,
+          displayColors: false,
+          callbacks: { label: (item) => pct(item.raw) },
+        },
+      },
+      scales: {
+        x: {
+          grid: { display: false },
+          border: { color: "#E6E7EA" },
+          ticks: {
+            autoSkip: false,
+            maxRotation: 0,
+            callback: (_, i) => (i === 0 || i === mid || i === last ? labels[i] : null),
+          },
+        },
+        y: {
+          min: 0,
+          max: yMax,
+          border: { display: false },
+          grid: { color: "#E6E7EA" },
+          ticks: { stepSize: 20, callback: (v) => v + "%" },
+        },
+      },
+    },
+    plugins: [avgLabel],
   });
+}
+
+function barRows(items) {
+  const top = Math.max(0, ...items.map((it) => it.value).filter(isNum));
+  return items.map((it) => {
+    const w = isNum(it.value) && top > 0 ? (it.value / top) * 100 : 0;
+    return `<div class="row">
+      <span class="row-label" title="${esc(it.label)}">${esc(it.label)}</span>
+      <div class="bar-cell"><div class="bar" style="width:${w.toFixed(1)}%"></div></div>
+      <span class="row-value">${pct(it.value)}</span>
+    </div>`;
+  }).join("");
+}
+
+const hourLabel = (h) => (isNum(h) ? String(h).padStart(2, "0") + "시" : DASH);
+
+function renderLists(d) {
+  const airlines = d.by_airline.slice(0, 5).map((a) => ({ label: a.name ?? DASH, value: a.delay_rate_pct }));
+  setHTML("airlines", barRows(airlines));
+  $("airlineCaption").textContent =
+    `${d.meta.min_airline_flights ?? DASH}편 이상 운항한 ${d.by_airline.length}개 항공사 중 상위 ${airlines.length}곳`;
+
+  const valid = d.by_hour.filter((h) => isNum(h.delay_rate_pct));
+  const sorted = [...valid].sort((a, b) => b.delay_rate_pct - a.delay_rate_pct);
+  setHTML("hours", barRows(sorted.slice(0, 5).map((h) => ({ label: hourLabel(h.hour), value: h.delay_rate_pct }))));
+  const low = sorted[sorted.length - 1];
+  $("hourCaption").textContent = low ? `가장 낮은 시간은 ${hourLabel(low.hour)} (${pct(low.delay_rate_pct)})` : DASH;
+}
+
+function renderRain(d) {
+  const we = d.weather_effect;
+  const r = we.rain.delay_rate_pct, c = we.clear.delay_rate_pct;
+  const scale = Math.max(isNum(r) ? r : 0, isNum(c) ? c : 0) * 1.2;
+  const width = (v) => (isNum(v) && scale > 0 ? (v / scale) * 100 : 0).toFixed(1) + "%";
+  $("rainBar").style.width = width(r);
+  $("clearBar").style.width = width(c);
+  $("rainValue").textContent = pct(r);
+  $("clearValue").textContent = pct(c);
+
+  const p = we.p_value;
+  const pText = isNum(p) ? (p < 0.001 ? "p < 0.001" : `p = ${p}`) : `p = ${DASH}`;
+  $("rainCaption").textContent = `${pText} · 비 온 날 ${isNum(we.rain_days) ? we.rain_days : DASH}일`;
+}
+
+async function main() {
+  try {
+    const res = await fetch("data/dashboard.json?t=" + Date.now(), { cache: "no-store" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const d = await res.json();
+
+    // generated_at은 KST 문자열이라 날짜 부분을 그대로 잘라 '오늘'로 쓴다 (브라우저 시간대와 무관).
+    const todayIso = d.meta.generated_at ? d.meta.generated_at.slice(0, 10) : null;
+    const trendPast = d.daily_trend.filter((r) => r.date !== todayIso);
+
+    $("app").hidden = false;
+    renderHeader(d);
+    renderKpis(d, trendPast);
+    renderLists(d);
+    renderRain(d);
+    renderTrend(d, trendPast);
+  } catch (e) {
+    console.warn("dashboard load failed:", e);
+    $("app").hidden = true;
+    $("error").hidden = false;
+  }
+}
+
+main();
 </script>
 </body>
 </html>
