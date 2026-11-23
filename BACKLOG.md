@@ -36,6 +36,10 @@
   - (a) [완료 2026-11-14] 지금: `brief.py`/`data_brief.py`의 전체 편수 집계에서 유령 행을 제외하거나 별도로 표시
   - (b) v2 PostgreSQL 이관 때: PK를 자연키(편명+계획시각+출도착)로 재설계
 
+### 5. brief.py 오늘 편수: scheduled_dt(KST)를 UTC 날짜와 비교하는 문제
+- 무엇: `brief.py`의 '오늘 편수'가 `utcnow()` 날짜로 `scheduled_dt`(KST)의 앞 8자리를 비교한다 → KST 날짜 기준으로 수정
+- 영향: KST 00:00~08:59에는 '오늘'이 전날로 잡힌다. `export_dashboard.py`의 `summary.today`는 이미 KST 날짜 기준
+
 ## 조사 필요
 
 ### 4. 김포 공항 관측(METAR/AMOS) 데이터 확보 검토
