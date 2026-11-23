@@ -40,6 +40,14 @@
 - 무엇: `brief.py`의 '오늘 편수'가 `utcnow()` 날짜로 `scheduled_dt`(KST)의 앞 8자리를 비교한다 → KST 날짜 기준으로 수정
 - 영향: KST 00:00~08:59에는 '오늘'이 전날로 잡힌다. `export_dashboard.py`의 `summary.today`는 이미 KST 날짜 기준
 
+### 6. 대시보드: 모바일 폭에서 추세 그래프 '평균' 라벨이 선과 겹침
+- 무엇: `docs/index.html` 최근 30일 그래프의 "평균 14.3%" 라벨이 375px 폭에서 지연율 선과 겹친다
+- 할 일: 모바일에서 라벨 위치(차트 위 여백·오른쪽 바깥) 조정 또는 배경 처리
+
+### 7. viz.py: cp949 콘솔에서 마지막 ✅ 출력 때 인코딩 에러
+- 무엇: `py viz.py`가 `docs/viz.html`은 정상 생성한 뒤, 마지막 `print("✅ …")`에서 `UnicodeEncodeError`로 종료 코드 1을 낸다
+- 할 일: 스크립트 시작부에 `sys.stdout.reconfigure(encoding="utf-8")` 추가 검토 (`brief.py`·`data_brief.py`와 같은 방식)
+
 ## 조사 필요
 
 ### 4. 김포 공항 관측(METAR/AMOS) 데이터 확보 검토
