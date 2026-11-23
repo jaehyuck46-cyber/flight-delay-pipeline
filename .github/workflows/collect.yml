@@ -50,12 +50,17 @@ jobs:
           OPENSKY_CLIENT_SECRET: ${{ secrets.OPENSKY_CLIENT_SECRET }}
         run: python track.py
 
-      # ── 뭐라도 하나 수집됐으면 커밋. 셋 다 죽었을 때만 안 함 ──
+      - name: 대시보드 JSON 생성
+        if: always()
+        continue-on-error: true
+        run: python export_dashboard.py
+
+      # ── 매 실행마다 커밋 (DB + 대시보드 JSON). 수집이 전부 실패해도 JSON의 health가 stale로 갱신되도록 ──
       - name: 수집한 DB를 저장소에 커밋
         if: always()
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
-          git add -f data/flights.db
-          git commit -m "자동 수집 (항공편+날씨+항공기위치)" || echo "변경사항 없음"
+          git add -f data/flights.db docs/data/dashboard.json
+          git commit -m "자동 수집 (항공편+날씨+항공기위치+대시보드)" || echo "변경사항 없음"
           git push
