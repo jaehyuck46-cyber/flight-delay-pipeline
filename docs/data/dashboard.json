@@ -1,7 +1,7 @@
 {
   "meta": {
     "schema_version": 1,
-    "generated_at": "2026-11-23T15:23:04+09:00",
+    "generated_at": "2026-11-23T15:56:42+09:00",
     "delay_threshold_min": 15,
     "min_airline_flights": 30,
     "ghost_rows_excluded": true,
@@ -9,27 +9,27 @@
   },
   "health": {
     "flights": {
-      "last_success": "2026-11-23T11:22:02+09:00",
-      "elapsed_min": 241,
+      "last_success": "2026-11-23T15:56:40+09:00",
+      "elapsed_min": 0,
       "failures_24h": 0,
       "status": "ok"
     },
     "weather": {
       "last_obs": "2026-11-22T23:00:00+09:00",
-      "elapsed_min": 983,
+      "elapsed_min": 1016,
       "status": "ok"
     }
   },
   "summary": {
     "today": {
-      "arrived": 37,
-      "delayed": 1,
-      "delay_rate_pct": 2.7,
-      "avg_delay_min": -3.1
+      "arrived": 87,
+      "delayed": 8,
+      "delay_rate_pct": 9.2,
+      "avg_delay_min": -1.1
     },
     "cumulative": {
-      "arrived": 15813,
-      "delayed": 2263,
+      "arrived": 15863,
+      "delayed": 2270,
       "delay_rate_pct": 14.3,
       "avg_delay_min": 0.0,
       "since": "2026-08-26"
@@ -221,20 +221,20 @@
     },
     {
       "date": "2026-11-23",
-      "arrived": 37,
-      "delay_rate_pct": 2.7,
+      "arrived": 87,
+      "delay_rate_pct": 9.2,
       "rain_mm": null
     }
   ],
   "by_airline": [
     {
       "name": "에어서울",
-      "arrived": 318,
-      "delay_rate_pct": 29.9
+      "arrived": 319,
+      "delay_rate_pct": 30.1
     },
     {
       "name": "이스타항공",
-      "arrived": 1876,
+      "arrived": 1880,
       "delay_rate_pct": 24.6
     },
     {
@@ -244,18 +244,18 @@
     },
     {
       "name": "진에어",
-      "arrived": 1105,
-      "delay_rate_pct": 21.4
+      "arrived": 1110,
+      "delay_rate_pct": 21.5
     },
     {
       "name": "제주항공",
-      "arrived": 2407,
-      "delay_rate_pct": 21.3
+      "arrived": 2416,
+      "delay_rate_pct": 21.2
     },
     {
       "name": "트리니티항공",
-      "arrived": 1191,
-      "delay_rate_pct": 13.5
+      "arrived": 1195,
+      "delay_rate_pct": 13.6
     },
     {
       "name": "파라타항공",
@@ -264,7 +264,7 @@
     },
     {
       "name": "대한항공",
-      "arrived": 3225,
+      "arrived": 3236,
       "delay_rate_pct": 11.6
     },
     {
@@ -274,7 +274,7 @@
     },
     {
       "name": "아시아나항공",
-      "arrived": 2064,
+      "arrived": 2071,
       "delay_rate_pct": 9.1
     },
     {
@@ -289,7 +289,7 @@
     },
     {
       "name": "에어부산",
-      "arrived": 1117,
+      "arrived": 1121,
       "delay_rate_pct": 7.8
     },
     {
@@ -299,7 +299,7 @@
     },
     {
       "name": "피치항공",
-      "arrived": 536,
+      "arrived": 537,
       "delay_rate_pct": 4.7
     },
     {
@@ -309,7 +309,7 @@
     },
     {
       "name": "중국국제항공",
-      "arrived": 87,
+      "arrived": 88,
       "delay_rate_pct": 2.3
     },
     {
@@ -319,17 +319,17 @@
     },
     {
       "name": "섬에어",
-      "arrived": 350,
+      "arrived": 351,
       "delay_rate_pct": 2.0
     },
     {
       "name": "중화항공",
-      "arrived": 61,
+      "arrived": 62,
       "delay_rate_pct": 0.0
     },
     {
       "name": "중국남방항공",
-      "arrived": 89,
+      "arrived": 90,
       "delay_rate_pct": 0.0
     }
   ],
@@ -356,32 +356,32 @@
     },
     {
       "hour": 11,
-      "arrived": 1194,
-      "delay_rate_pct": 8.9
-    },
-    {
-      "hour": 12,
-      "arrived": 1005,
+      "arrived": 1199,
       "delay_rate_pct": 8.8
     },
     {
+      "hour": 12,
+      "arrived": 1017,
+      "delay_rate_pct": 8.9
+    },
+    {
       "hour": 13,
-      "arrived": 1159,
-      "delay_rate_pct": 15.3
+      "arrived": 1171,
+      "delay_rate_pct": 15.4
     },
     {
       "hour": 14,
-      "arrived": 1297,
-      "delay_rate_pct": 19.9
+      "arrived": 1311,
+      "delay_rate_pct": 19.8
     },
     {
       "hour": 15,
-      "arrived": 498,
-      "delay_rate_pct": 22.1
+      "arrived": 504,
+      "delay_rate_pct": 21.8
     },
     {
       "hour": 16,
-      "arrived": 952,
+      "arrived": 953,
       "delay_rate_pct": 15.2
     },
     {
