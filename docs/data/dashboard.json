@@ -1,7 +1,7 @@
 {
   "meta": {
     "schema_version": 1,
-    "generated_at": "2026-11-26T13:17:50+09:00",
+    "generated_at": "2026-11-26T23:14:59+09:00",
     "delay_threshold_min": 15,
     "min_airline_flights": 30,
     "ghost_rows_excluded": true,
@@ -9,27 +9,27 @@
   },
   "health": {
     "flights": {
-      "last_success": "2026-11-26T13:17:48+09:00",
+      "last_success": "2026-11-26T23:14:56+09:00",
       "elapsed_min": 0,
       "failures_24h": 0,
       "status": "ok"
     },
     "weather": {
       "last_obs": "2026-11-25T23:00:00+09:00",
-      "elapsed_min": 857,
+      "elapsed_min": 1454,
       "status": "ok"
     }
   },
   "summary": {
     "today": {
-      "arrived": 56,
-      "delayed": 3,
-      "delay_rate_pct": 5.4,
-      "avg_delay_min": -4.0
+      "arrived": 171,
+      "delayed": 17,
+      "delay_rate_pct": 9.9,
+      "avg_delay_min": 0.2
     },
     "cumulative": {
-      "arrived": 16347,
-      "delayed": 2360,
+      "arrived": 16462,
+      "delayed": 2374,
       "delay_rate_pct": 14.4,
       "avg_delay_min": 0.1,
       "since": "2026-08-26"
@@ -221,40 +221,40 @@
     },
     {
       "date": "2026-11-26",
-      "arrived": 56,
-      "delay_rate_pct": 5.4,
+      "arrived": 171,
+      "delay_rate_pct": 9.9,
       "rain_mm": null
     }
   ],
   "by_airline": [
     {
       "name": "에어서울",
-      "arrived": 330,
-      "delay_rate_pct": 30.9
+      "arrived": 333,
+      "delay_rate_pct": 30.6
     },
     {
       "name": "이스타항공",
-      "arrived": 1929,
+      "arrived": 1941,
       "delay_rate_pct": 24.4
     },
     {
       "name": "상해항공",
-      "arrived": 89,
-      "delay_rate_pct": 22.5
-    },
-    {
-      "name": "제주항공",
-      "arrived": 2486,
-      "delay_rate_pct": 21.6
+      "arrived": 90,
+      "delay_rate_pct": 22.2
     },
     {
       "name": "진에어",
-      "arrived": 1142,
+      "arrived": 1151,
+      "delay_rate_pct": 21.6
+    },
+    {
+      "name": "제주항공",
+      "arrived": 2502,
       "delay_rate_pct": 21.5
     },
     {
       "name": "트리니티항공",
-      "arrived": 1243,
+      "arrived": 1255,
       "delay_rate_pct": 13.4
     },
     {
@@ -264,17 +264,17 @@
     },
     {
       "name": "대한항공",
-      "arrived": 3343,
+      "arrived": 3371,
       "delay_rate_pct": 11.8
     },
     {
       "name": "타이거에어 타이완",
-      "arrived": 51,
-      "delay_rate_pct": 9.8
+      "arrived": 52,
+      "delay_rate_pct": 9.6
     },
     {
       "name": "아시아나항공",
-      "arrived": 2138,
+      "arrived": 2154,
       "delay_rate_pct": 9.4
     },
     {
@@ -284,12 +284,12 @@
     },
     {
       "name": "에어부산",
-      "arrived": 1156,
-      "delay_rate_pct": 7.9
+      "arrived": 1163,
+      "delay_rate_pct": 7.8
     },
     {
       "name": "일본항공",
-      "arrived": 281,
+      "arrived": 283,
       "delay_rate_pct": 7.8
     },
     {
@@ -299,12 +299,12 @@
     },
     {
       "name": "피치항공",
-      "arrived": 555,
-      "delay_rate_pct": 4.9
+      "arrived": 558,
+      "delay_rate_pct": 4.8
     },
     {
       "name": "전일본공수",
-      "arrived": 279,
+      "arrived": 281,
       "delay_rate_pct": 4.3
     },
     {
@@ -313,13 +313,13 @@
       "delay_rate_pct": 2.2
     },
     {
-      "name": "섬에어",
-      "arrived": 362,
+      "name": "에바항공",
+      "arrived": 52,
       "delay_rate_pct": 1.9
     },
     {
-      "name": "에바항공",
-      "arrived": 52,
+      "name": "섬에어",
+      "arrived": 365,
       "delay_rate_pct": 1.9
     },
     {
@@ -366,53 +366,53 @@
     },
     {
       "hour": 13,
-      "arrived": 1204,
+      "arrived": 1215,
       "delay_rate_pct": 15.6
     },
     {
       "hour": 14,
-      "arrived": 1336,
+      "arrived": 1350,
       "delay_rate_pct": 19.5
     },
     {
       "hour": 15,
-      "arrived": 519,
-      "delay_rate_pct": 21.8
+      "arrived": 526,
+      "delay_rate_pct": 21.7
     },
     {
       "hour": 16,
-      "arrived": 977,
+      "arrived": 984,
       "delay_rate_pct": 15.1
     },
     {
       "hour": 17,
-      "arrived": 1146,
-      "delay_rate_pct": 18.8
+      "arrived": 1160,
+      "delay_rate_pct": 18.7
     },
     {
       "hour": 18,
-      "arrived": 1452,
-      "delay_rate_pct": 21.8
+      "arrived": 1467,
+      "delay_rate_pct": 21.7
     },
     {
       "hour": 19,
-      "arrived": 875,
-      "delay_rate_pct": 21.1
+      "arrived": 884,
+      "delay_rate_pct": 21.2
     },
     {
       "hour": 20,
-      "arrived": 643,
-      "delay_rate_pct": 16.5
+      "arrived": 649,
+      "delay_rate_pct": 16.6
     },
     {
       "hour": 21,
-      "arrived": 1383,
-      "delay_rate_pct": 13.2
+      "arrived": 1399,
+      "delay_rate_pct": 13.1
     },
     {
       "hour": 22,
-      "arrived": 1694,
-      "delay_rate_pct": 16.8
+      "arrived": 1710,
+      "delay_rate_pct": 16.7
     }
   ],
   "weather_effect": {
