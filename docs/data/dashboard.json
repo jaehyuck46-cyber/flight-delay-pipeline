@@ -1,7 +1,7 @@
 {
   "meta": {
     "schema_version": 1,
-    "generated_at": "2026-11-26T23:14:59+09:00",
+    "generated_at": "2026-11-27T08:12:38+09:00",
     "delay_threshold_min": 15,
     "min_airline_flights": 30,
     "ghost_rows_excluded": true,
@@ -9,26 +9,26 @@
   },
   "health": {
     "flights": {
-      "last_success": "2026-11-26T23:14:56+09:00",
+      "last_success": "2026-11-27T08:12:36+09:00",
       "elapsed_min": 0,
       "failures_24h": 0,
       "status": "ok"
     },
     "weather": {
-      "last_obs": "2026-11-25T23:00:00+09:00",
-      "elapsed_min": 1454,
+      "last_obs": "2026-11-26T23:00:00+09:00",
+      "elapsed_min": 552,
       "status": "ok"
     }
   },
   "summary": {
     "today": {
-      "arrived": 171,
-      "delayed": 17,
-      "delay_rate_pct": 9.9,
-      "avg_delay_min": 0.2
+      "arrived": 4,
+      "delayed": 0,
+      "delay_rate_pct": 0.0,
+      "avg_delay_min": -12.2
     },
     "cumulative": {
-      "arrived": 16462,
+      "arrived": 16466,
       "delayed": 2374,
       "delay_rate_pct": 14.4,
       "avg_delay_min": 0.1,
@@ -36,21 +36,15 @@
     }
   },
   "latest_weather": {
-    "obs_time": "2026-11-25T23:00:00+09:00",
-    "temp_c": 5.8,
+    "obs_time": "2026-11-26T23:00:00+09:00",
+    "temp_c": 10.2,
     "rain_mm": 0.0,
-    "wind_ms": 1.9,
-    "humidity_pct": 71,
-    "cloud_0_10": 7,
-    "visibility_m": 22510
+    "wind_ms": 1.8,
+    "humidity_pct": 75,
+    "cloud_0_10": 0,
+    "visibility_m": 24410
   },
   "daily_trend": [
-    {
-      "date": "2026-10-28",
-      "arrived": 176,
-      "delay_rate_pct": 9.1,
-      "rain_mm": 0.0
-    },
     {
       "date": "2026-10-29",
       "arrived": 179,
@@ -223,6 +217,12 @@
       "date": "2026-11-26",
       "arrived": 171,
       "delay_rate_pct": 9.9,
+      "rain_mm": 0.0
+    },
+    {
+      "date": "2026-11-27",
+      "arrived": 4,
+      "delay_rate_pct": 0.0,
       "rain_mm": null
     }
   ],
@@ -249,7 +249,7 @@
     },
     {
       "name": "제주항공",
-      "arrived": 2502,
+      "arrived": 2503,
       "delay_rate_pct": 21.5
     },
     {
@@ -264,7 +264,7 @@
     },
     {
       "name": "대한항공",
-      "arrived": 3371,
+      "arrived": 3372,
       "delay_rate_pct": 11.8
     },
     {
@@ -274,7 +274,7 @@
     },
     {
       "name": "아시아나항공",
-      "arrived": 2154,
+      "arrived": 2156,
       "delay_rate_pct": 9.4
     },
     {
@@ -336,12 +336,12 @@
   "by_hour": [
     {
       "hour": 7,
-      "arrived": 229,
+      "arrived": 231,
       "delay_rate_pct": 0.9
     },
     {
       "hour": 8,
-      "arrived": 574,
+      "arrived": 576,
       "delay_rate_pct": 4.2
     },
     {
@@ -422,11 +422,11 @@
       "avg_delay_min": 7.9
     },
     "clear": {
-      "flights": 15505,
+      "flights": 15676,
       "delay_rate_pct": 13.9,
       "avg_delay_min": -0.3
     },
-    "p_value": 7.7e-18,
+    "p_value": 5.1e-18,
     "rain_days": 16
   }
 }
